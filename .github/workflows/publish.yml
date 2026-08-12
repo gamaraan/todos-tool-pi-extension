@@ -1,6 +1,6 @@
 name: publish
 
-# Publishes @gamaraan/todos to npm when a v* tag is pushed. The verify job
+# Publishes @gamaraan/todos-tool to npm when a v* tag is pushed. The verify job
 # re-runs the full gate (typecheck, unit tests, package contents, tag
 # invariants) and the publish job releases with npm provenance (id-token).
 # Tests are self-contained bun tests against the published @earendil-works/pi-*

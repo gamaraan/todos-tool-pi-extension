@@ -1,5 +1,5 @@
 {
-  "name": "@gamaraan/todos",
+  "name": "@gamaraan/todos-tool",
   "version": "0.1.0",
   "description": "pi coding-agent extension: an Oh My Pi (OMP)-style phased todo tool with completion reminders, an eager first-turn prelude, a /todo command, and a HUD widget.",
   "keywords": ["pi-package", "todo", "todos", "task-tracking", "omp"],

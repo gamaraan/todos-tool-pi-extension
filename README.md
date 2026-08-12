@@ -1,4 +1,4 @@
-# @gamaraan/todos — OMP-style todos for pi
+# @gamaraan/todos-tool — OMP-style todos for pi
 
 A [pi](https://github.com/earendil-works/pi-coding-agent) coding-agent
 extension that ports the **Oh My Pi (OMP) todo tool, tracker, and `/todo`
@@ -82,13 +82,13 @@ result, manual edit, and session reload.
 
 ## Install
 
-The published package is `@gamaraan/todos`:
+The published package is `@gamaraan/todos-tool`:
 
 ```bash
-pi install npm:@gamaraan/todos
+pi install npm:@gamaraan/todos-tool
 ```
 
-Pin a release with `pi install npm:@gamaraan/todos@0.1.0`. From GitHub:
+Pin a release with `pi install npm:@gamaraan/todos-tool@0.1.0`. From GitHub:
 `pi install git:github.com/gamaraan/todos-tool-pi-extension`. Manual: copy
 `src/index.ts` (plus the `src/` modules it imports) into
 `~/.pi/agent/extensions/`, or add the path to the `extensions` array in

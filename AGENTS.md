@@ -5,7 +5,7 @@ touching the code.
 
 ## What this project is
 
-`@gamaraan/todos` — a pi coding-agent **extension package** that ports the
+`@gamaraan/todos-tool` — a pi coding-agent **extension package** that ports the
 Oh My Pi (OMP) todo tool, todo tracker, and `/todo` command to pi.
 
 - **The port source is OMP**: `oh-my-pi/packages/coding-agent/src/tools/todo.ts`,

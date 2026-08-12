@@ -1,0 +1,45 @@
+name: test
+
+# Runs the unit test suite on every push to a branch that has a PR open
+# against main. Unlike the ask-tool extension, the tests are self-contained:
+# they run with bun against the published @earendil-works/pi-* devDependency
+# packages, so no pi-mono checkout or vendored test mirror is needed.
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          # setup-bun caches the bun executable by default; disable it (see
+          # zizmor cache-poisoning audit) - the verify job must be hermetic.
+          no-cache: true
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Run unit tests
+        run: bun test
+
+      - name: Verify package contents
+        run: bun run verify:package

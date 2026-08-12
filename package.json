@@ -1,0 +1,56 @@
+{
+  "name": "@gamaraan/todos-tool",
+  "version": "0.1.0",
+  "description": "pi coding-agent extension: an Oh My Pi (OMP)-style phased todo tool with completion reminders, an eager first-turn prelude, a /todo command, and a HUD widget.",
+  "keywords": ["pi-package", "todo", "todos", "task-tracking", "omp"],
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "files": ["src", "README.md", "LICENSE"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gamaraan/todos-tool-pi-extension.git"
+  },
+  "homepage": "https://github.com/gamaraan/todos-tool-pi-extension",
+  "bugs": {
+    "url": "https://github.com/gamaraan/todos-tool-pi-extension/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "verify:package": "npm pack --dry-run --json"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.84.1",
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@earendil-works/pi-tui": "0.84.1",
+    "@types/bun": "1.3.14",
+    "typescript": "^7.0.2"
+  }
+}

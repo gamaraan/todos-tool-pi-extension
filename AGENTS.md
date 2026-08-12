@@ -11,9 +11,9 @@ Oh My Pi (OMP) todo tool, todo tracker, and `/todo` command to pi.
 - **The port source is OMP**: `oh-my-pi/packages/coding-agent/src/tools/todo.ts`,
   `session/todo-tracker.ts`, `modes/controllers/todo-command-controller.ts`,
   plus `prompts/tools/todo.md`, `prompts/system/eager-todo.md`,
-  `prompts/system/mid-run-todo-nudge.md`. The full mapping and rationale live
-  in [`PORT-PLAN.md`](./PORT-PLAN.md) and [`RESEARCH.md`](./RESEARCH.md) —
-  read them before porting anything else.
+  `prompts/system/mid-run-todo-nudge.md`. The file-by-file source mapping
+  (with OMP line ranges) is the Layout table below; deliberate behavior
+  differences are listed in the README's "Differences from OMP" table.
 - **Hard constraint: this is an extension, not a core change.** Do NOT modify
   any file under `pi-mono/packages/*/src/` to make the extension work. If a
   pi API is missing, approximate with what the extension API offers (e.g.
@@ -52,6 +52,9 @@ Oh My Pi (OMP) todo tool, todo tracker, and `/todo` command to pi.
 - **Persistence = branch replay.** Tool results carry `details.phases`;
   manual edits write `user_todo_edit` custom entries. Never add a sidecar
   file for todo state.
+- **Tool result contract**: every successful `todo` result carries
+  `details: { op, phases, storage, completedTasks? }` — `details.phases` is
+  the durable record the branch replay reads, so keep this shape stable.
 - **Config via `todo.json`** (agent dir + `<cwd>/.pi/`), not pi settings.
   Keep `enabled: false` as a global floor (fail closed).
 - **No inline imports, no `any`.** Follow the project's TypeScript strictness
@@ -72,6 +75,38 @@ Oh My Pi (OMP) todo tool, todo tracker, and `/todo` command to pi.
   `PI_CODING_AGENT_DIR` + `settings.json` `extensions` entry) without
   "Failed to load extension" diagnostics. New behaviors need regression
   tests, ported from OMP's suite where one exists.
+- **CI**: `.github/workflows/test.yml` runs typecheck + tests + package
+  verification on every PR push to main; `.github/workflows/publish.yml`
+  re-verifies and publishes to npm (with provenance) on `v*` tags.
+- **Pre-release manual smoke checklist** — terminal rendering and live
+  interaction can't be unit-tested; before each release run these in a real
+  pi session with a working model (against the installed package) and
+  record results:
+
+  1. **Tool flow** — "plan X in 3 phases" renders roman-numeral phase
+     headers, checkboxes, and progress (`1/3`); completing a task strikes
+     it through and the next pending task auto-promotes; the collapsed
+     viewport expands with `ctrl+e`.
+  2. **Persistence** — todos survive `/new`/restart; after a rewind
+     (`/tree`) the state matches that point in history.
+  3. **HUD** — `N/M done` widget updates after every `todo` result and
+     `/todo` command; disappears after `/todo rm (all)`; absent in
+     `--mode json` / `-p` runs.
+  4. **`/todo`** — append auto-creates a missing phase; start/done fuzzy
+     match; `edit` acknowledges manual changes on the next agent turn;
+     export → rm → import round-trips; `copy` pastes via OSC 52; after
+     `rm (all)` the agent does NOT recreate the list on its own.
+  5. **Eager prelude** — `"preferred"` opens multi-step sessions with a
+     phased `todo init`; `"always"` does so on the first turn of a NEW
+     session only (question prompts don't trigger it); resuming never
+     injects it.
+  6. **Mid-run nudge** — 12+ mutating tool results with incomplete todos
+     eventually produce a `todo done` call (≤2 per cycle).
+  7. **Completion reminder** — stopping with incomplete todos fires a
+     reminder turn; not when ending with a question or all complete;
+     suppressed by `"reminders": false` / `"remindersMax": 0`.
+  8. **Disabled** — `"enabled": false` removes the tool and all tracker
+     behaviors; `/todo` still works for manual lists.
 
 ## Guardrails inherited from the user's global rules
 
@@ -79,9 +114,10 @@ Oh My Pi (OMP) todo tool, todo tracker, and `/todo` command to pi.
   presenting the exact plan and waiting for explicit approval. Dev
   dependencies are pinned to the published pi packages (`0.84.1`), mirroring
   `next-prompt-extension`.
-- **Never push to main; always work on a feature branch + PR.** This repo is
-  not yet a git repository — when it is initialized, follow the git workflow
-  (branch → PR → user merges → cleanup).
+- **Never push to main; always work on a feature branch + PR.** Follow the
+  git workflow (branch → PR → user merges → cleanup). CI
+  (`.github/workflows/test.yml`) runs the full gate on every PR push to
+  main — don't merge before it passes.
 - **Never wipe existing content.** Read before edit; use targeted edits.
 - **License**: MIT, and the LICENSE must retain the OMP (© Can Bölük) and pi
   (© Mario Zechner) copyright notices — this is a port of their code.
@@ -93,6 +129,10 @@ Oh My Pi (OMP) todo tool, todo tracker, and `/todo` command to pi.
   `#reconcileTodosWithSubagents`, `setActiveTodoDescriptionsProvider`,
   `todoMatchesAnyDescription` matcher wiring) are omitted — re-add them only
   when pi grows in-process subagents, un-guarding the existing seams.
+  Their self-disable guards: `createEagerTaskPrelude` returns undefined
+  unless `task.eager === "always"` AND `"task"` is in the active tools;
+  `#reconcileTodosWithSubagents` only runs in the main session and matches
+  finished-subagent descriptions (a no-op without subagents).
 - **Plan mode**: pi's plan-mode is an example extension, not core; the
   tracker stubs `planModeEnabled() → false`. Don't add plan-mode coupling
   without revisiting this decision.

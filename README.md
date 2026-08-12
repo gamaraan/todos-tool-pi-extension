@@ -89,7 +89,7 @@ pi install npm:@gamaraan/todos
 ```
 
 Pin a release with `pi install npm:@gamaraan/todos@0.1.0`. From GitHub:
-`pi install git:github.com/gamaraan/todos-tool`. Manual: copy
+`pi install git:github.com/gamaraan/todos-tool-pi-extension`. Manual: copy
 `src/index.ts` (plus the `src/` modules it imports) into
 `~/.pi/agent/extensions/`, or add the path to the `extensions` array in
 `~/.pi/agent/settings.json`. Restart pi (or start a new session) after
@@ -178,9 +178,8 @@ and `@earendil-works/pi-ai` (peer dependencies, provided by your pi
 installation). The `src/` modules are loaded by pi's extension loader (jiti)
 directly as TypeScript — no build step.
 
-See [`AGENTS.md`](./AGENTS.md) for the development guide and
-[`PORT-PLAN.md`](./PORT-PLAN.md) + [`RESEARCH.md`](./RESEARCH.md) for the
-port rationale and the omp source mapping.
+See [`AGENTS.md`](./AGENTS.md) for the development guide — architecture,
+conventions, and the pre-release manual smoke checklist.
 
 ## License
 

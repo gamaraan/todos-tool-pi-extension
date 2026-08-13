@@ -324,8 +324,8 @@ describe("todos extension factory", () => {
 				{
 					channel: "desktop-notify:request",
 					data: {
-						title: "Todo",
-						body: "Completed 1 todo task",
+						title: "Todo completed",
+						body: "Completed: finish",
 						type: "todo-completed",
 						urgency: "normal",
 						sound: "info",
@@ -334,8 +334,8 @@ describe("todos extension factory", () => {
 				{
 					channel: "desktop-notify:request",
 					data: {
-						title: "Todo",
-						body: "Blocked 1 todo task",
+						title: "Todo blocked",
+						body: "Blocked: wait",
 						type: "todo-blocked",
 						urgency: "normal",
 						sound: "warning",
@@ -381,8 +381,8 @@ describe("todos extension factory", () => {
 			expect(eventsEmitted[0]).toEqual({
 				channel: "desktop-notify:request",
 				data: {
-					title: "Todo",
-					body: "Completed 1 todo task",
+					title: "Todo completed",
+					body: "Completed: finish",
 					type: "todo-completed",
 					urgency: "normal",
 					sound: "info",

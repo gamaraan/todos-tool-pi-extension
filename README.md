@@ -89,7 +89,7 @@ The published package is `@gamaraan/todos-tool`:
 pi install npm:@gamaraan/todos-tool
 ```
 
-Pin a release with `pi install npm:@gamaraan/todos-tool@0.2.0`. From GitHub:
+Pin a release with `pi install npm:@gamaraan/todos-tool@0.2.1`. From GitHub:
 `pi install git:github.com/gamaraan/todos-tool-pi-extension`. Manual: copy
 `src/index.ts` (plus the `src/` modules it imports) into
 `~/.pi/agent/extensions/`, or add the path to the `extensions` array in
@@ -137,21 +137,23 @@ environment variable > project JSON > global JSON > built-in default:
 ## Optional desktop notifications
 
 In TUI mode, a successful transition from active work to `completed` or
-`blocked` emits a count-only `desktop-notify:request` EventBus request. The
-payloads are locally composed and never include task text or blocker reasons:
+`blocked` emits a named `desktop-notify:request` EventBus request that includes
+the transitioned task names:
 
 ```ts
 {
-  title: "Todo",
-  body: "Completed 1 todo task",
+  title: "Todo completed",
+  body: "Completed: Ship it",
   type: "todo-completed",
   urgency: "normal",
   sound: "info"
 }
 ```
 
-Blocked transitions use `"Blocked N todo task(s)"`, type `"todo-blocked"`, and
-sound `"warning"`. Requests are emitted only on terminals advertising OSC
+Blocked transitions use a `"Todo blocked"` title, a body such as
+`"Blocked: Need input"`, type `"todo-blocked"`, and sound `"warning"`.
+Multiple transitions of the same kind are listed in one body. Blocker reasons
+are not included. Requests are emitted only on terminals advertising OSC
 9/99-capable focus handling (Kitty, Ghostty, WezTerm, iTerm2, or Warp), so the
 terminal can suppress the toast while the pi tab is focused. Print, JSON, RPC,
 replay, read-only, failed, repeated, and unsupported-terminal paths remain
@@ -199,7 +201,7 @@ Faithful port, with these deliberate adaptations:
 | Sticky HUD header at the top of the chat | HUD widget above the editor (`ctx.ui.setWidget`) |
 | Strikethrough reveal animation driven by the spinner frame | Completed tasks strike through immediately (pi render options carry no frame counter) |
 | Settings via OMP's settings schema (`todo.*`) | `todo.json` config files (global + trusted project), `/todos-configure`, CLI flags, and environment overrides |
-| Desktop notification integration | Optional EventBus-only `desktop-notify:request`, gated to OSC 9/99-capable TUI terminals |
+| Desktop notification integration | Optional named EventBus `desktop-notify:request` payloads with transitioned task names, gated to OSC 9/99-capable TUI terminals |
 | `$EDITOR` for `/todo edit` | Built-in pi editor dialog in the TUI; `$EDITOR` fallback outside it |
 | Plan-mode pause, subagent reconciliation, eager task prelude | Out of scope (pi has no core plan mode / subagents); the guarded hooks are omitted |
 | `<system-reminder>` as a `developer` message | Same text as a hidden `custom` message (pi converts these to user-role in context — the only injection mechanism extensions have) |

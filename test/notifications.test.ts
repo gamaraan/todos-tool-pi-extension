@@ -17,8 +17,8 @@ describe("deriveTodoNotifications", () => {
 
 		expect(deriveTodoNotifications(previous, next)).toEqual([
 			{
-				title: "Todo",
-				body: "Completed 1 todo task",
+				title: "Todo completed",
+				body: "Completed: Ship it",
 				type: "todo-completed",
 				urgency: "normal",
 				sound: "info",
@@ -34,8 +34,8 @@ describe("deriveTodoNotifications", () => {
 
 		expect(deriveTodoNotifications(previous, next)).toEqual([
 			{
-				title: "Todo",
-				body: "Blocked 1 todo task",
+				title: "Todo blocked",
+				body: "Blocked: Need input",
 				type: "todo-blocked",
 				urgency: "normal",
 				sound: "warning",
@@ -43,7 +43,7 @@ describe("deriveTodoNotifications", () => {
 		]);
 	});
 
-	it("pluralizes counts and orders completion before blocked", () => {
+	it("pluralizes names and orders completion before blocked", () => {
 		const previous: TodoPhase[] = [
 			{
 				name: "Work",
@@ -67,15 +67,15 @@ describe("deriveTodoNotifications", () => {
 
 		expect(deriveTodoNotifications(previous, next)).toEqual([
 			{
-				title: "Todo",
-				body: "Completed 2 todo tasks",
+				title: "Todo completed",
+				body: "Completed: a, b",
 				type: "todo-completed",
 				urgency: "normal",
 				sound: "info",
 			},
 			{
-				title: "Todo",
-				body: "Blocked 1 todo task",
+				title: "Todo blocked",
+				body: "Blocked: c",
 				type: "todo-blocked",
 				urgency: "normal",
 				sound: "warning",

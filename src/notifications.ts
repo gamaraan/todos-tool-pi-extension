@@ -1,14 +1,14 @@
 /**
  * Pure derivation of desktop-notify requests from todo state transitions.
  *
- * The payloads intentionally contain counts only. Task text and blocker
- * reasons never leave the todo extension through this integration boundary.
+ * The payloads identify the transition in the title and include the names of
+ * tasks that crossed into the terminal state.
  */
 
 import type { TodoItem, TodoPhase } from "./types.ts";
 
 export interface TodoNotificationPayload {
-	title: "Todo";
+	title: string;
 	body: string;
 	type: "todo-completed" | "todo-blocked";
 	urgency: "normal";
@@ -23,11 +23,11 @@ function isActiveStatus(status: TodoItem["status"]): boolean {
 	return status === "pending" || status === "in_progress";
 }
 
-function countNewTransitions(
+function getNewTransitionNames(
 	previous: TodoPhase[],
 	next: TodoPhase[],
 	target: "completed" | "blocked",
-): number {
+): string[] {
 	const previousStatuses = new Map<string, TodoItem["status"]>();
 	for (const phase of previous) {
 		for (const task of phase.tasks) {
@@ -35,7 +35,7 @@ function countNewTransitions(
 		}
 	}
 
-	let count = 0;
+	const names: string[] = [];
 	for (const phase of next) {
 		for (const task of phase.tasks) {
 			if (task.status !== target) continue;
@@ -43,42 +43,42 @@ function countNewTransitions(
 				todoIdentity(phase.name, task.content),
 			);
 			if (previousStatus !== undefined && isActiveStatus(previousStatus)) {
-				count++;
+				names.push(task.content);
 			}
 		}
 	}
-	return count;
+	return names;
+}
+
+function createNotification(
+	target: "completed" | "blocked",
+	taskNames: string[],
+): TodoNotificationPayload {
+	const completed = target === "completed";
+	return {
+		title: completed ? "Todo completed" : "Todo blocked",
+		body: `${completed ? "Completed" : "Blocked"}: ${taskNames.join(", ")}`,
+		type: completed ? "todo-completed" : "todo-blocked",
+		urgency: "normal",
+		sound: completed ? "info" : "warning",
+	};
 }
 
 /**
- * Derive bounded EventBus payloads for newly completed and blocked tasks.
- * Completion is emitted before blocked when one mutation creates both groups.
+ * Derive EventBus payloads for newly completed and blocked tasks. Completion is
+ * emitted before blocked when one mutation creates both groups.
  */
 export function deriveTodoNotifications(
 	previous: TodoPhase[],
 	next: TodoPhase[],
 ): TodoNotificationPayload[] {
-	const completed = countNewTransitions(previous, next, "completed");
-	const blocked = countNewTransitions(previous, next, "blocked");
+	const completed = getNewTransitionNames(previous, next, "completed");
+	const blocked = getNewTransitionNames(previous, next, "blocked");
 	const notifications: TodoNotificationPayload[] = [];
-	if (completed > 0) {
-		notifications.push({
-			title: "Todo",
-			body: `Completed ${completed} todo task${completed === 1 ? "" : "s"}`,
-			type: "todo-completed",
-			urgency: "normal",
-			sound: "info",
-		});
-	}
-	if (blocked > 0) {
-		notifications.push({
-			title: "Todo",
-			body: `Blocked ${blocked} todo task${blocked === 1 ? "" : "s"}`,
-			type: "todo-blocked",
-			urgency: "normal",
-			sound: "warning",
-		});
-	}
+	if (completed.length > 0)
+		notifications.push(createNotification("completed", completed));
+	if (blocked.length > 0)
+		notifications.push(createNotification("blocked", blocked));
 	return notifications;
 }
 

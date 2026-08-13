@@ -12,9 +12,7 @@ const phase = (tasks: TodoPhase["tasks"]): TodoPhase => ({
 
 describe("deriveTodoNotifications", () => {
 	it("creates a completion payload for one active task", () => {
-		const previous = [
-			phase([{ content: "Ship it", status: "in_progress" }]),
-		];
+		const previous = [phase([{ content: "Ship it", status: "in_progress" }])];
 		const next = [phase([{ content: "Ship it", status: "completed" }])];
 
 		expect(deriveTodoNotifications(previous, next)).toEqual([
@@ -97,9 +95,9 @@ describe("deriveTodoNotifications", () => {
 		];
 
 		expect(deriveTodoNotifications(snapshot, snapshot)).toEqual([]);
-		expect(deriveTodoNotifications(snapshot, structuredClone(snapshot))).toEqual(
-			[],
-		);
+		expect(
+			deriveTodoNotifications(snapshot, structuredClone(snapshot)),
+		).toEqual([]);
 	});
 
 	it("does not notify removed or newly terminal tasks", () => {
@@ -151,17 +149,17 @@ describe("deriveTodoNotifications", () => {
 	});
 
 	it("only enables requests for terminals with OSC focus handling", () => {
-		expect(
-			supportsTodoTerminalNotifications({ TERM_PROGRAM: "kitty" }),
-		).toBe(true);
-		expect(
-			supportsTodoTerminalNotifications({ TERM_PROGRAM: "ghostty" }),
-		).toBe(true);
-		expect(
-			supportsTodoTerminalNotifications({ TERM_PROGRAM: "wezterm" }),
-		).toBe(true);
-		expect(
-			supportsTodoTerminalNotifications({ TERM_PROGRAM: "xterm" }),
-		).toBe(false);
+		expect(supportsTodoTerminalNotifications({ TERM_PROGRAM: "kitty" })).toBe(
+			true,
+		);
+		expect(supportsTodoTerminalNotifications({ TERM_PROGRAM: "ghostty" })).toBe(
+			true,
+		);
+		expect(supportsTodoTerminalNotifications({ TERM_PROGRAM: "wezterm" })).toBe(
+			true,
+		);
+		expect(supportsTodoTerminalNotifications({ TERM_PROGRAM: "xterm" })).toBe(
+			false,
+		);
 	});
 });

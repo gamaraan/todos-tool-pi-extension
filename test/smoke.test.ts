@@ -52,10 +52,7 @@ function makeRecordingAPI(): {
 		registerCommand: (
 			name: string,
 			options: {
-				handler: (
-					args: string,
-					ctx: ExtensionCommandContext,
-				) => Promise<void>;
+				handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 			},
 		) => {
 			commands.push(name);
@@ -277,18 +274,47 @@ describe("todos extension factory", () => {
 					getSessionFile: () => "/tmp/project/session.jsonl",
 				},
 			);
-			await dispatch(handlers, "session_start", { type: "session_start", reason: "startup" }, ctx);
+			await dispatch(
+				handlers,
+				"session_start",
+				{ type: "session_start", reason: "startup" },
+				ctx,
+			);
 			const tool = tools.find((candidate) => candidate.name === "todo");
 			expect(tool).toBeDefined();
 			if (!tool) return;
 
-			await tool.execute!("complete", { op: "done", task: "finish" }, undefined, undefined, ctx);
-			await tool.execute!("block", { op: "block", task: "wait", reason: "external input" }, undefined, undefined, ctx);
-			await tool.execute!("repeat", { op: "done", task: "finish" }, undefined, undefined, ctx);
+			await tool.execute!(
+				"complete",
+				{ op: "done", task: "finish" },
+				undefined,
+				undefined,
+				ctx,
+			);
+			await tool.execute!(
+				"block",
+				{ op: "block", task: "wait", reason: "external input" },
+				undefined,
+				undefined,
+				ctx,
+			);
+			await tool.execute!(
+				"repeat",
+				{ op: "done", task: "finish" },
+				undefined,
+				undefined,
+				ctx,
+			);
 			await tool.execute!("view", { op: "view" }, undefined, undefined, ctx);
 			let failedOperationThrew = false;
 			try {
-				await tool.execute!("failed", { op: "block" }, undefined, undefined, ctx);
+				await tool.execute!(
+					"failed",
+					{ op: "block" },
+					undefined,
+					undefined,
+					ctx,
+				);
 			} catch {
 				failedOperationThrew = true;
 			}
@@ -326,7 +352,8 @@ describe("todos extension factory", () => {
 		const originalTermProgram = process.env.TERM_PROGRAM;
 		process.env.TERM_PROGRAM = "ghostty";
 		try {
-			const { api, handlers, commandHandlers, eventsEmitted } = makeRecordingAPI();
+			const { api, handlers, commandHandlers, eventsEmitted } =
+				makeRecordingAPI();
 			todosExtension(api);
 			sandboxAgentDir();
 			const phases = [
@@ -340,7 +367,12 @@ describe("todos extension factory", () => {
 					getSessionFile: () => "/tmp/project/session.jsonl",
 				},
 			);
-			await dispatch(handlers, "session_start", { type: "session_start", reason: "startup" }, ctx);
+			await dispatch(
+				handlers,
+				"session_start",
+				{ type: "session_start", reason: "startup" },
+				ctx,
+			);
 			const command = commandHandlers.get("todo");
 			expect(command).toBeDefined();
 			if (!command) return;
@@ -379,12 +411,26 @@ describe("todos extension factory", () => {
 				{ mode: "tui", hasUI: true, cwd: "/tmp/project" },
 				{ getBranch: () => branchWithTodo(phases) as never },
 			);
-			await dispatch(handlers, "session_start", { type: "session_start", reason: "startup" }, ctx);
+			await dispatch(
+				handlers,
+				"session_start",
+				{ type: "session_start", reason: "startup" },
+				ctx,
+			);
 			const tool = tools.find((candidate) => candidate.name === "todo");
 			expect(tool).toBeDefined();
 			if (!tool) return;
-			const result = await tool.execute!("safe", { op: "done", task: "finish" }, undefined, undefined, ctx);
-			expect((result.details as { phases: typeof phases }).phases[0]?.tasks[0]?.status).toBe("completed");
+			const result = await tool.execute!(
+				"safe",
+				{ op: "done", task: "finish" },
+				undefined,
+				undefined,
+				ctx,
+			);
+			expect(
+				(result.details as { phases: typeof phases }).phases[0]?.tasks[0]
+					?.status,
+			).toBe("completed");
 		} finally {
 			if (originalTermProgram === undefined) delete process.env.TERM_PROGRAM;
 			else process.env.TERM_PROGRAM = originalTermProgram;
@@ -409,11 +455,22 @@ describe("todos extension factory", () => {
 					getSessionFile: () => "/tmp/project/session.jsonl",
 				},
 			);
-			await dispatch(handlers, "session_start", { type: "session_start", reason: "startup" }, ctx);
+			await dispatch(
+				handlers,
+				"session_start",
+				{ type: "session_start", reason: "startup" },
+				ctx,
+			);
 			const tool = tools.find((candidate) => candidate.name === "todo");
 			expect(tool).toBeDefined();
 			if (!tool) return;
-			await tool.execute!("silent", { op: "done", task: "finish" }, undefined, undefined, ctx);
+			await tool.execute!(
+				"silent",
+				{ op: "done", task: "finish" },
+				undefined,
+				undefined,
+				ctx,
+			);
 			await dispatch(handlers, "session_tree", { type: "session_tree" }, ctx);
 			expect(eventsEmitted).toEqual([]);
 		} finally {
@@ -443,7 +500,9 @@ describe("todos extension factory", () => {
 		expect(command).toBeDefined();
 		if (!command) return;
 		await command("", ctx as ExtensionCommandContext);
-		expect(JSON.parse(fs.readFileSync(path.join(agent, "todo.json"), "utf8"))).toEqual({
+		expect(
+			JSON.parse(fs.readFileSync(path.join(agent, "todo.json"), "utf8")),
+		).toEqual({
 			enabled: true,
 			reminders: false,
 			remindersMax: 2,

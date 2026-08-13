@@ -170,7 +170,8 @@ export function loadTodoConfig(
 	if (overrides.enabled !== undefined)
 		effective.enabled =
 			globalPartial.enabled === false ? false : overrides.enabled;
-	if (overrides.reminders !== undefined) effective.reminders = overrides.reminders;
+	if (overrides.reminders !== undefined)
+		effective.reminders = overrides.reminders;
 	if (overrides.remindersMax !== undefined)
 		effective.remindersMax = overrides.remindersMax;
 	if (overrides.eager !== undefined) effective.eager = overrides.eager;
@@ -181,8 +182,10 @@ function parseBooleanOverride(value: unknown): boolean | undefined {
 	if (typeof value === "boolean") return value;
 	if (typeof value !== "string") return undefined;
 	const normalized = value.trim().toLowerCase();
-	if (normalized === "on" || normalized === "true" || normalized === "1") return true;
-	if (normalized === "off" || normalized === "false" || normalized === "0") return false;
+	if (normalized === "on" || normalized === "true" || normalized === "1")
+		return true;
+	if (normalized === "off" || normalized === "false" || normalized === "0")
+		return false;
 	return undefined;
 }
 
@@ -220,9 +223,7 @@ export function resolveTodoConfig(
 		remindersMax: parseRemindersMaxOverride(
 			flagOrEnv(TODO_FLAGS.remindersMax, TODO_ENV.remindersMax),
 		),
-		eager: parseEagerOverride(
-			flagOrEnv(TODO_FLAGS.eager, TODO_ENV.eager),
-		),
+		eager: parseEagerOverride(flagOrEnv(TODO_FLAGS.eager, TODO_ENV.eager)),
 	});
 }
 

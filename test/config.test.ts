@@ -139,7 +139,12 @@ describe("loadTodoConfig", () => {
 
 	it("resolves environment overrides over JSON", () => {
 		const { cwd } = setupDirs(
-			JSON.stringify({ enabled: true, reminders: true, remindersMax: 3, eager: "default" }),
+			JSON.stringify({
+				enabled: true,
+				reminders: true,
+				remindersMax: 3,
+				eager: "default",
+			}),
 			null,
 		);
 		const loaded = resolveTodoConfig(
@@ -164,7 +169,12 @@ describe("loadTodoConfig", () => {
 
 	it("resolves flags over environment and preserves the global enabled floor", () => {
 		const { cwd } = setupDirs(
-			JSON.stringify({ enabled: false, reminders: true, remindersMax: 3, eager: "default" }),
+			JSON.stringify({
+				enabled: false,
+				reminders: true,
+				remindersMax: 3,
+				eager: "default",
+			}),
 			null,
 		);
 		const loaded = resolveTodoConfig(
@@ -177,10 +187,10 @@ describe("loadTodoConfig", () => {
 					: name === TODO_FLAGS.remindersMax
 						? "2"
 						: undefined,
-				{
-					PI_TODO_ENABLED: "off",
-					PI_TODO_REMINDERS_MAX: "9",
-				},
+			{
+				PI_TODO_ENABLED: "off",
+				PI_TODO_REMINDERS_MAX: "9",
+			},
 		);
 		expect(loaded.config.enabled).toBe(false);
 		expect(loaded.config.remindersMax).toBe(2);

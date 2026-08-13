@@ -352,7 +352,10 @@ export default function todosExtension(pi: ExtensionAPI): void {
 		description: "Configure and persist todos settings",
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI || ctx.mode !== "tui") {
-				ctx.ui.notify("/todos-configure requires interactive TUI mode.", "warning");
+				ctx.ui.notify(
+					"/todos-configure requires interactive TUI mode.",
+					"warning",
+				);
 				return;
 			}
 			const current: TodoConfig = {
@@ -374,7 +377,10 @@ export default function todosExtension(pi: ExtensionAPI): void {
 			if (remindersMaxInput === undefined) return;
 			const remindersMax = Number(remindersMaxInput.trim());
 			if (!Number.isInteger(remindersMax) || remindersMax < 0) {
-				ctx.ui.notify("Maximum reminders must be a non-negative integer.", "error");
+				ctx.ui.notify(
+					"Maximum reminders must be a non-negative integer.",
+					"error",
+				);
 				return;
 			}
 			const eager = await ctx.ui.select("First-turn todo planning", [

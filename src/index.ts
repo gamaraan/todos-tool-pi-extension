@@ -27,8 +27,8 @@
  * - **HUD widget**: a compact per-phase checklist with progress above the
  *   editor, kept in sync with every state change.
  * - **Optional desktop notifications**: successful completion and blocked
- *   transitions request count-only notifications on OSC 9/99-capable TUI
- *   terminals; task text and blocker reasons never leave this extension.
+ *   transitions request named notifications with task names on OSC
+ *   9/99-capable TUI terminals; blocker reasons never leave this extension.
  *
  * Config lives in `<agent dir>/todo.json` (global) and `<cwd>/.pi/todo.json`
  * (project, trusted only): `enabled`, `reminders`, `remindersMax`, `eager`.

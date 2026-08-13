@@ -5,6 +5,8 @@
  * (state helpers section).
  */
 
+// pi provides typebox through its coding-agent runtime; knip cannot see that host provision.
+// pi-lens-ignore: knip:unlisted
 import { Value } from "typebox/value";
 import {
 	todoSchema,

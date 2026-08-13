@@ -59,6 +59,8 @@ export interface TodoCommandHost {
 		action: string,
 		opts?: { removed?: boolean },
 	): void;
+	/** Report a committed mutation to optional integrations. */
+	onSuccessfulMutation?(previous: TodoPhase[], next: TodoPhase[]): void;
 	notify(text: string, type: "info" | "warning" | "error"): void;
 	/** Open the native multi-line editor; undefined = cancelled. */
 	openEditor(title: string, prefill: string): Promise<string | undefined>;
@@ -549,7 +551,9 @@ export class TodoCommandController {
 		action: string,
 		opts?: { removed?: boolean },
 	): void {
+		const previousPhases = this.#currentPhases();
 		this.host.commit(nextPhases, action, opts);
+		this.host.onSuccessfulMutation?.(previousPhases, nextPhases);
 	}
 }
 

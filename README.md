@@ -4,9 +4,10 @@ A [pi](https://github.com/earendil-works/pi-coding-agent) coding-agent
 extension that ports the **Oh My Pi (OMP) todo tool, tracker, and `/todo`
 command** to pi as a self-contained extension package: a phased todo list the
 agent plans and updates itself, with completion reminders, an eager first-turn
-prelude, a `/todo` slash command, and a persistent HUD widget.
+prelude, a `/todo` slash command, a persistent HUD widget, and optional
+best-effort desktop notification requests.
 
-```
+```text
 Todo  2/5 done
   I. Foundation 1/2
     ✓ Scaffold crate
@@ -88,7 +89,7 @@ The published package is `@gamaraan/todos-tool`:
 pi install npm:@gamaraan/todos-tool
 ```
 
-Pin a release with `pi install npm:@gamaraan/todos-tool@0.1.0`. From GitHub:
+Pin a release with `pi install npm:@gamaraan/todos-tool@0.2.0`. From GitHub:
 `pi install git:github.com/gamaraan/todos-tool-pi-extension`. Manual: copy
 `src/index.ts` (plus the `src/` modules it imports) into
 `~/.pi/agent/extensions/`, or add the path to the `extensions` array in
@@ -121,8 +122,46 @@ small JSON file from the host agent dir, optionally overridden per project:
 | `remindersMax` | `3` | Max reminder attempts per prompt cycle. |
 | `eager` | `"default"` | `"default"` = no prelude, `"preferred"` = soft reminder, `"always"` = MUST-call reminder on the first turn. |
 
-Invalid values and unknown keys are ignored with a warning; config is loaded
-at session start (restart or `/reload` to pick up changes).
+Invalid values and unknown keys are ignored with a warning. Configure these
+settings interactively with `/todos-configure`; it saves the global JSON file and
+reloads the extension when finished. At startup, precedence is CLI flag >
+environment variable > project JSON > global JSON > built-in default:
+
+| Setting | CLI flag | Environment variable |
+| --- | --- | --- |
+| Enabled | `--todo-enabled on/off` | `PI_TODO_ENABLED` |
+| Reminders | `--todo-reminders on/off` | `PI_TODO_REMINDERS` |
+| Reminder limit | `--todo-reminders-max N` | `PI_TODO_REMINDERS_MAX` |
+| Eager mode | `--todo-eager default/preferred/always` | `PI_TODO_EAGER` |
+
+## Optional desktop notifications
+
+In TUI mode, a successful transition from active work to `completed` or
+`blocked` emits a count-only `desktop-notify:request` EventBus request. The
+payloads are locally composed and never include task text or blocker reasons:
+
+```ts
+{
+  title: "Todo",
+  body: "Completed 1 todo task",
+  type: "todo-completed",
+  urgency: "normal",
+  sound: "info"
+}
+```
+
+Blocked transitions use `"Blocked N todo task(s)"`, type `"todo-blocked"`, and
+sound `"warning"`. Requests are emitted only on terminals advertising OSC
+9/99-capable focus handling (Kitty, Ghostty, WezTerm, iTerm2, or Warp), so the
+terminal can suppress the toast while the pi tab is focused. Print, JSON, RPC,
+replay, read-only, failed, repeated, and unsupported-terminal paths remain
+silent. `@gamaraan/desktop-notify` is optional: no dependency or installation
+is required, and without a listener the todo extension continues normally.
+The desktop-notify extension's own settings control delivery when it is loaded.
+
+Use `/todos-configure` for the successive interactive settings dialogues. The
+wizard writes `todo.json` and reloads the extension after saving; startup flags
+and environment variables still override the saved values for that process.
 
 ## How it works
 
@@ -159,7 +198,8 @@ Faithful port, with these deliberate adaptations:
 | `todo.eager: "always"` forces a `tool_choice` | pi extensions cannot force tool choices; `"always"` injects a MUST-call reminder (models virtually always comply) |
 | Sticky HUD header at the top of the chat | HUD widget above the editor (`ctx.ui.setWidget`) |
 | Strikethrough reveal animation driven by the spinner frame | Completed tasks strike through immediately (pi render options carry no frame counter) |
-| Settings via OMP's settings schema (`todo.*`) | `todo.json` config files (global + trusted project) |
+| Settings via OMP's settings schema (`todo.*`) | `todo.json` config files (global + trusted project), `/todos-configure`, CLI flags, and environment overrides |
+| Desktop notification integration | Optional EventBus-only `desktop-notify:request`, gated to OSC 9/99-capable TUI terminals |
 | `$EDITOR` for `/todo edit` | Built-in pi editor dialog in the TUI; `$EDITOR` fallback outside it |
 | Plan-mode pause, subagent reconciliation, eager task prelude | Out of scope (pi has no core plan mode / subagents); the guarded hooks are omitted |
 | `<system-reminder>` as a `developer` message | Same text as a hidden `custom` message (pi converts these to user-role in context — the only injection mechanism extensions have) |
@@ -176,7 +216,8 @@ bun run verify:package   # npm pack --dry-run
 The extension imports `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`,
 and `@earendil-works/pi-ai` (peer dependencies, provided by your pi
 installation). The `src/` modules are loaded by pi's extension loader (jiti)
-directly as TypeScript — no build step.
+directly as TypeScript — no build step. Desktop notifications use only pi's
+EventBus and do not add a `desktop-notify` dependency.
 
 See [`AGENTS.md`](./AGENTS.md) for the development guide — architecture,
 conventions, and the pre-release manual smoke checklist.

@@ -26,9 +26,13 @@
  *   telling the model what changed (and not to recreate removed items).
  * - **HUD widget**: a compact per-phase checklist with progress above the
  *   editor, kept in sync with every state change.
+ * - **Optional desktop notifications**: successful completion and blocked
+ *   transitions request count-only notifications on OSC 9/99-capable TUI
+ *   terminals; task text and blocker reasons never leave this extension.
  *
  * Config lives in `<agent dir>/todo.json` (global) and `<cwd>/.pi/todo.json`
  * (project, trusted only): `enabled`, `reminders`, `remindersMax`, `eager`.
+ * CLI flags take precedence over environment variables and JSON config.
  *
  * @module todos
  */
@@ -45,7 +49,7 @@ import {
 	type ExtensionContext,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import type { Component, Text } from "@earendil-works/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
 import {
 	buildSystemReminder,
 	TodoCommandController,
@@ -53,14 +57,21 @@ import {
 	openInExternalEditor,
 } from "./command.ts";
 import {
-	loadTodoConfig,
+	readTodoConfig,
+	resolveTodoConfig,
+	saveTodoConfig,
 	TODO_CONFIG_DEFAULTS,
+	TODO_FLAGS,
 	type TodoConfig,
 } from "./config.ts";
 import { executeTodoOp } from "./execute.ts";
 import { TODO_REMINDER_CUSTOM_TYPE, TodoTracker } from "./tracker.ts";
 import { USER_TODO_EDIT_CUSTOM_TYPE } from "./persistence.ts";
 import { clonePhases, inferTodoOp } from "./state.ts";
+import {
+	deriveTodoNotifications,
+	supportsTodoTerminalNotifications,
+} from "./notifications.ts";
 import { TODO_TOOL_DESCRIPTION } from "./prompts.ts";
 import {
 	phaseRomanNumeral,
@@ -91,12 +102,34 @@ export interface TodoRenderResultOptions {
 
 const HUD_WIDGET_KEY = "todo-hud";
 const USER_TODO_EDIT_REMINDER_TYPE = "user-todo-edit";
+const DESKTOP_NOTIFY_EVENT = "desktop-notify:request";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export default function todosExtension(pi: ExtensionAPI): void {
+	pi.registerFlag(TODO_FLAGS.enabled, {
+		type: "string",
+		description:
+			"Enable or disable the todos tool (on|off). Overrides PI_TODO_ENABLED and todo.json.",
+	});
+	pi.registerFlag(TODO_FLAGS.reminders, {
+		type: "string",
+		description:
+			"Enable or disable incomplete-todo reminders (on|off). Overrides PI_TODO_REMINDERS and todo.json.",
+	});
+	pi.registerFlag(TODO_FLAGS.remindersMax, {
+		type: "string",
+		description:
+			"Maximum incomplete-todo reminders per cycle. Overrides PI_TODO_REMINDERS_MAX and todo.json.",
+	});
+	pi.registerFlag(TODO_FLAGS.eager, {
+		type: "string",
+		description:
+			"Todo eager mode (default|preferred|always). Overrides PI_TODO_EAGER and todo.json.",
+	});
+
 	// =========================================================================
 	// Canonical in-memory state
 	// =========================================================================
@@ -112,6 +145,26 @@ export default function todosExtension(pi: ExtensionAPI): void {
 	function setPhases(next: TodoPhase[], ctx?: ExtensionContext): void {
 		phases = clonePhases(next);
 		if (ctx) updateHud(ctx);
+	}
+
+	function emitTodoNotifications(
+		previous: TodoPhase[],
+		next: TodoPhase[],
+		ctx: ExtensionContext,
+	): void {
+		if (
+			ctx.mode !== "tui" ||
+			!ctx.hasUI ||
+			!supportsTodoTerminalNotifications(process.env)
+		)
+			return;
+		for (const payload of deriveTodoNotifications(previous, next)) {
+			try {
+				pi.events.emit(DESKTOP_NOTIFY_EVENT, payload);
+			} catch {
+				// Optional EventBus delivery must never affect the todo mutation.
+			}
+		}
 	}
 
 	// =========================================================================
@@ -242,15 +295,19 @@ export default function todosExtension(pi: ExtensionAPI): void {
 			_onUpdate: AgentToolUpdateCallback<TodoToolDetails> | undefined,
 			ctx: ExtensionContext,
 		): Promise<AgentToolResult<TodoToolDetails>> {
+			const previousPhases = getPhases();
 			const outcome = executeTodoOp(
-				phases,
+				previousPhases,
 				params,
 				Boolean(ctx.sessionManager.getSessionFile()),
 			);
 			// pi signals tool errors by throwing; the model receives the message
 			// text (omp's formatSummary output, errors + full current list).
 			if (outcome.failed) throw new Error(outcome.summary);
-			if (!outcome.readOnly) setPhases(outcome.phases, ctx);
+			if (!outcome.readOnly) {
+				setPhases(outcome.phases, ctx);
+				emitTodoNotifications(previousPhases, outcome.phases, ctx);
+			}
 			const details: TodoToolDetails = {
 				op: outcome.op,
 				phases: outcome.phases,
@@ -291,6 +348,57 @@ export default function todosExtension(pi: ExtensionAPI): void {
 	// /todo command
 	// =========================================================================
 
+	pi.registerCommand("todos-configure", {
+		description: "Configure and persist todos settings",
+		handler: async (_args, ctx) => {
+			if (!ctx.hasUI || ctx.mode !== "tui") {
+				ctx.ui.notify(
+					"/todos-configure requires interactive TUI mode.",
+					"warning",
+				);
+				return;
+			}
+			const current: TodoConfig = {
+				...TODO_CONFIG_DEFAULTS,
+				...readTodoConfig(),
+			};
+			const enabled = await ctx.ui.confirm(
+				"Todos tool",
+				`Enable the todos tool? Currently ${current.enabled ? "on" : "off"}.`,
+			);
+			const reminders = await ctx.ui.confirm(
+				"Todo reminders",
+				`Enable incomplete-todo reminders? Currently ${current.reminders ? "on" : "off"}.`,
+			);
+			const remindersMaxInput = await ctx.ui.input(
+				"Maximum reminders",
+				String(current.remindersMax),
+			);
+			if (remindersMaxInput === undefined) return;
+			const remindersMax = Number(remindersMaxInput.trim());
+			if (!Number.isInteger(remindersMax) || remindersMax < 0) {
+				ctx.ui.notify(
+					"Maximum reminders must be a non-negative integer.",
+					"error",
+				);
+				return;
+			}
+			const eager = await ctx.ui.select("First-turn todo planning", [
+				"default",
+				"preferred",
+				"always",
+			]);
+			if (eager === undefined) return;
+			if (eager !== "default" && eager !== "preferred" && eager !== "always") {
+				ctx.ui.notify("Invalid eager mode selected.", "error");
+				return;
+			}
+			saveTodoConfig({ enabled, reminders, remindersMax, eager });
+			ctx.ui.notify("Todos configuration saved. Reloading…", "info");
+			await ctx.reload();
+		},
+	});
+
 	pi.registerCommand("todo", {
 		description: "View, edit, import/export, and mutate the todo list",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
@@ -319,6 +427,8 @@ export default function todosExtension(pi: ExtensionAPI): void {
 						{ triggerTurn: false },
 					);
 				},
+				onSuccessfulMutation: (previous, next) =>
+					emitTodoNotifications(previous, next, ctx),
 				notify: (text: string, type: "info" | "warning" | "error") => {
 					if (ctx.hasUI) ctx.ui.notify(text, type);
 					else console.error(text);
@@ -359,13 +469,14 @@ export default function todosExtension(pi: ExtensionAPI): void {
 	// =========================================================================
 
 	pi.on("session_start", async (_event, ctx) => {
-		const loaded = loadTodoConfig(
+		const loaded = resolveTodoConfig(
 			ctx.cwd,
 			() => ctx.isProjectTrusted(),
 			(message) => {
 				if (ctx.hasUI) ctx.ui.notify(message, "warning");
 				else console.error(message);
 			},
+			(name) => pi.getFlag(name),
 		);
 		config = loaded.config;
 		if (!config.enabled) {

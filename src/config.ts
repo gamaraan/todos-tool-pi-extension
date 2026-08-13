@@ -17,7 +17,7 @@
  */
 
 import * as fs from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 
 export type TodoEagerMode = "default" | "preferred" | "always";
@@ -40,10 +40,35 @@ export const TODO_CONFIG_DEFAULTS: TodoConfig = {
 	eager: "default",
 };
 
+export const TODO_CONFIG_FILE_NAME = "todo.json";
+export const TODO_FLAGS = {
+	enabled: "todo-enabled",
+	reminders: "todo-reminders",
+	remindersMax: "todo-reminders-max",
+	eager: "todo-eager",
+} as const;
+export const TODO_ENV = {
+	enabled: "PI_TODO_ENABLED",
+	reminders: "PI_TODO_REMINDERS",
+	remindersMax: "PI_TODO_REMINDERS_MAX",
+	eager: "PI_TODO_EAGER",
+} as const;
+
+export interface TodoConfigOverrides {
+	enabled?: boolean;
+	reminders?: boolean;
+	remindersMax?: number;
+	eager?: TodoEagerMode;
+}
+
 export interface LoadedTodoConfig {
 	config: TodoConfig;
 	/** The project config file was honored (trusted project). */
 	projectTrusted: boolean;
+}
+
+export function getTodoConfigPath(): string {
+	return join(getAgentDir(), TODO_CONFIG_FILE_NAME);
 }
 
 function parseConfigFile(
@@ -122,8 +147,9 @@ export function loadTodoConfig(
 	cwd: string,
 	isProjectTrusted: () => boolean,
 	warn: (message: string) => void,
+	overrides: TodoConfigOverrides = {},
 ): LoadedTodoConfig {
-	const globalFile = join(getAgentDir(), "todo.json");
+	const globalFile = getTodoConfigPath();
 	const globalPartial = parseConfigFile(globalFile, warn) ?? {};
 	const config: TodoConfig = { ...TODO_CONFIG_DEFAULTS, ...globalPartial };
 
@@ -140,5 +166,88 @@ export function loadTodoConfig(
 		}
 	}
 
-	return { config, projectTrusted };
+	const effective: TodoConfig = { ...config };
+	if (overrides.enabled !== undefined)
+		effective.enabled =
+			globalPartial.enabled === false ? false : overrides.enabled;
+	if (overrides.reminders !== undefined)
+		effective.reminders = overrides.reminders;
+	if (overrides.remindersMax !== undefined)
+		effective.remindersMax = overrides.remindersMax;
+	if (overrides.eager !== undefined) effective.eager = overrides.eager;
+	return { config: effective, projectTrusted };
+}
+
+function parseBooleanOverride(value: unknown): boolean | undefined {
+	if (typeof value === "boolean") return value;
+	if (typeof value !== "string") return undefined;
+	const normalized = value.trim().toLowerCase();
+	if (normalized === "on" || normalized === "true" || normalized === "1")
+		return true;
+	if (normalized === "off" || normalized === "false" || normalized === "0")
+		return false;
+	return undefined;
+}
+
+function parseRemindersMaxOverride(value: unknown): number | undefined {
+	if (typeof value !== "string" && typeof value !== "number") return undefined;
+	const parsed = typeof value === "number" ? value : Number(value.trim());
+	return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function parseEagerOverride(value: unknown): TodoEagerMode | undefined {
+	return value === "default" || value === "preferred" || value === "always"
+		? value
+		: undefined;
+}
+
+/** Resolve startup overrides with flag > environment > JSON precedence. */
+export function resolveTodoConfig(
+	cwd: string,
+	isProjectTrusted: () => boolean,
+	warn: (message: string) => void,
+	getFlag: (name: string) => boolean | string | undefined,
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): LoadedTodoConfig {
+	const flagOrEnv = (flag: string, envName: string): unknown => {
+		const fromFlag = getFlag(flag);
+		return fromFlag !== undefined ? fromFlag : env[envName];
+	};
+	return loadTodoConfig(cwd, isProjectTrusted, warn, {
+		enabled: parseBooleanOverride(
+			flagOrEnv(TODO_FLAGS.enabled, TODO_ENV.enabled),
+		),
+		reminders: parseBooleanOverride(
+			flagOrEnv(TODO_FLAGS.reminders, TODO_ENV.reminders),
+		),
+		remindersMax: parseRemindersMaxOverride(
+			flagOrEnv(TODO_FLAGS.remindersMax, TODO_ENV.remindersMax),
+		),
+		eager: parseEagerOverride(flagOrEnv(TODO_FLAGS.eager, TODO_ENV.eager)),
+	});
+}
+
+/** Read the persisted global config without applying project or runtime overrides. */
+export function readTodoConfig(
+	path = getTodoConfigPath(),
+): Partial<TodoConfig> {
+	return parseConfigFile(path, () => {}) ?? {};
+}
+
+/** Persist the complete global config used by the interactive wizard. */
+export function saveTodoConfig(
+	config: TodoConfig,
+	path = getTodoConfigPath(),
+): void {
+	fs.mkdirSync(dirname(path), { recursive: true });
+	if (fs.existsSync(path) && fs.lstatSync(path).isSymbolicLink()) {
+		throw new Error(`refusing to overwrite symlink ${path}`);
+	}
+	const temporary = `${path}.tmp-${process.pid}-${Date.now()}`;
+	try {
+		fs.writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+		fs.renameSync(temporary, path);
+	} finally {
+		if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true });
+	}
 }

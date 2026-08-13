@@ -6,7 +6,14 @@ import { afterEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadTodoConfig, TODO_CONFIG_DEFAULTS } from "../src/config.ts";
+import {
+	loadTodoConfig,
+	readTodoConfig,
+	resolveTodoConfig,
+	saveTodoConfig,
+	TODO_CONFIG_DEFAULTS,
+	TODO_FLAGS,
+} from "../src/config.ts";
 
 describe("loadTodoConfig", () => {
 	const warnings: string[] = [];
@@ -128,5 +135,79 @@ describe("loadTodoConfig", () => {
 		const { cwd } = setupDirs(JSON.stringify({ remindersMax: 0 }), null);
 		const loaded = loadTodoConfig(cwd, () => true, warn);
 		expect(loaded.config.remindersMax).toBe(0);
+	});
+
+	it("resolves environment overrides over JSON", () => {
+		const { cwd } = setupDirs(
+			JSON.stringify({
+				enabled: true,
+				reminders: true,
+				remindersMax: 3,
+				eager: "default",
+			}),
+			null,
+		);
+		const loaded = resolveTodoConfig(
+			cwd,
+			() => true,
+			warn,
+			() => undefined,
+			{
+				PI_TODO_ENABLED: "off",
+				PI_TODO_REMINDERS: "off",
+				PI_TODO_REMINDERS_MAX: "7",
+				PI_TODO_EAGER: "preferred",
+			},
+		);
+		expect(loaded.config).toEqual({
+			enabled: false,
+			reminders: false,
+			remindersMax: 7,
+			eager: "preferred",
+		});
+	});
+
+	it("resolves flags over environment and preserves the global enabled floor", () => {
+		const { cwd } = setupDirs(
+			JSON.stringify({
+				enabled: false,
+				reminders: true,
+				remindersMax: 3,
+				eager: "default",
+			}),
+			null,
+		);
+		const loaded = resolveTodoConfig(
+			cwd,
+			() => true,
+			warn,
+			(name) =>
+				name === TODO_FLAGS.enabled
+					? "on"
+					: name === TODO_FLAGS.remindersMax
+						? "2"
+						: undefined,
+			{
+				PI_TODO_ENABLED: "off",
+				PI_TODO_REMINDERS_MAX: "9",
+			},
+		);
+		expect(loaded.config.enabled).toBe(false);
+		expect(loaded.config.remindersMax).toBe(2);
+	});
+
+	it("persists and reads the complete global config", () => {
+		setupDirs(null, null);
+		const target = path.join(tempRoot, "saved", "todo.json");
+		saveTodoConfig(
+			{ enabled: false, reminders: false, remindersMax: 1, eager: "always" },
+			target,
+		);
+		expect(readTodoConfig(target)).toEqual({
+			enabled: false,
+			reminders: false,
+			remindersMax: 1,
+			eager: "always",
+		});
 	});
 });

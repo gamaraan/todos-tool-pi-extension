@@ -10,11 +10,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type {
 	ExtensionAPI,
+	ExtensionCommandContext,
 	ExtensionContext,
 	ExtensionHandler,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import todosExtension from "../src/index.ts";
+import { makeTestTheme } from "./helpers.ts";
 
 type AnyHandler = ExtensionHandler<any, any>;
 
@@ -23,10 +25,20 @@ function makeRecordingAPI(): {
 	handlers: Map<string, AnyHandler[]>;
 	tools: ToolDefinition[];
 	commands: string[];
+	commandHandlers: Map<
+		string,
+		(args: string, ctx: ExtensionCommandContext) => Promise<void>
+	>;
+	eventsEmitted: Array<{ channel: string; data: unknown }>;
 } {
 	const handlers = new Map<string, AnyHandler[]>();
 	const tools: ToolDefinition[] = [];
 	const commands: string[] = [];
+	const commandHandlers = new Map<
+		string,
+		(args: string, ctx: ExtensionCommandContext) => Promise<void>
+	>();
+	const eventsEmitted: Array<{ channel: string; data: unknown }> = [];
 
 	const api: ExtensionAPI = {
 		on: ((event: string, handler: AnyHandler) => {
@@ -37,8 +49,14 @@ function makeRecordingAPI(): {
 		registerTool: (tool: ToolDefinition) => {
 			tools.push(tool);
 		},
-		registerCommand: (name: string) => {
+		registerCommand: (
+			name: string,
+			options: {
+				handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+			},
+		) => {
 			commands.push(name);
+			commandHandlers.set(name, options.handler);
 		},
 		registerShortcut: () => {},
 		registerFlag: () => {},
@@ -62,10 +80,16 @@ function makeRecordingAPI(): {
 		setThinkingLevel: () => {},
 		registerProvider: () => {},
 		unregisterProvider: () => {},
-		events: { on: () => {}, emit: () => {}, off: () => {} },
+		events: {
+			on: () => () => {},
+			emit: (channel: string, data: unknown) => {
+				eventsEmitted.push({ channel, data });
+			},
+			off: () => {},
+		},
 	} as unknown as ExtensionAPI;
 
-	return { api, handlers, tools, commands };
+	return { api, handlers, tools, commands, commandHandlers, eventsEmitted };
 }
 
 function makeContext(
@@ -113,7 +137,7 @@ function makeContext(
 			addAutocompleteProvider: () => {},
 			setEditorComponent: () => {},
 			getEditorComponent: () => undefined,
-			theme: {} as never,
+			theme: makeTestTheme(),
 			getAllThemes: () => [],
 			getTheme: () => undefined,
 			setTheme: () => ({ success: true }),
@@ -204,6 +228,7 @@ describe("todos extension factory", () => {
 		}
 
 		expect(commands).toContain("todo");
+		expect(commands).toContain("todos-configure");
 
 		const tool = tools.find((t) => t.name === "todo");
 		expect(tool).toBeDefined();
@@ -223,6 +248,267 @@ describe("todos extension factory", () => {
 		expect(tool.prepareArguments?.(args)).toEqual({ ...args, op: "init" });
 		// Uninferable shapes pass through and fail schema validation.
 		expect(tool.prepareArguments?.({ task: "x" })).toEqual({ task: "x" });
+	});
+
+	it("emits completion and blocked notifications for successful TUI mutations", async () => {
+		const originalTermProgram = process.env.TERM_PROGRAM;
+		process.env.TERM_PROGRAM = "kitty";
+		try {
+			const { api, handlers, tools, eventsEmitted } = makeRecordingAPI();
+			todosExtension(api);
+			sandboxAgentDir();
+			const phases = [
+				{
+					name: "Work",
+					tasks: [
+						{ content: "finish", status: "in_progress" },
+						{ content: "wait", status: "pending" },
+					],
+				},
+			];
+			const ctx = makeContext(
+				{ mode: "tui", hasUI: true, cwd: "/tmp/project" },
+				{
+					getBranch: () => branchWithTodo(phases) as never,
+					getCwd: () => "/tmp/project",
+					getSessionFile: () => "/tmp/project/session.jsonl",
+				},
+			);
+			await dispatch(
+				handlers,
+				"session_start",
+				{ type: "session_start", reason: "startup" },
+				ctx,
+			);
+			const tool = tools.find((candidate) => candidate.name === "todo");
+			expect(tool).toBeDefined();
+			if (!tool) return;
+
+			await tool.execute!(
+				"complete",
+				{ op: "done", task: "finish" },
+				undefined,
+				undefined,
+				ctx,
+			);
+			await tool.execute!(
+				"block",
+				{ op: "block", task: "wait", reason: "external input" },
+				undefined,
+				undefined,
+				ctx,
+			);
+			await tool.execute!(
+				"repeat",
+				{ op: "done", task: "finish" },
+				undefined,
+				undefined,
+				ctx,
+			);
+			await tool.execute!("view", { op: "view" }, undefined, undefined, ctx);
+			let failedOperationThrew = false;
+			try {
+				await tool.execute!(
+					"failed",
+					{ op: "block" },
+					undefined,
+					undefined,
+					ctx,
+				);
+			} catch {
+				failedOperationThrew = true;
+			}
+			expect(failedOperationThrew).toBe(true);
+
+			expect(eventsEmitted).toEqual([
+				{
+					channel: "desktop-notify:request",
+					data: {
+						title: "Todo",
+						body: "Completed 1 todo task",
+						type: "todo-completed",
+						urgency: "normal",
+						sound: "info",
+					},
+				},
+				{
+					channel: "desktop-notify:request",
+					data: {
+						title: "Todo",
+						body: "Blocked 1 todo task",
+						type: "todo-blocked",
+						urgency: "normal",
+						sound: "warning",
+					},
+				},
+			]);
+		} finally {
+			if (originalTermProgram === undefined) delete process.env.TERM_PROGRAM;
+			else process.env.TERM_PROGRAM = originalTermProgram;
+		}
+	});
+
+	it("routes /todo completion through the same notification seam", async () => {
+		const originalTermProgram = process.env.TERM_PROGRAM;
+		process.env.TERM_PROGRAM = "ghostty";
+		try {
+			const { api, handlers, commandHandlers, eventsEmitted } =
+				makeRecordingAPI();
+			todosExtension(api);
+			sandboxAgentDir();
+			const phases = [
+				{ name: "Work", tasks: [{ content: "finish", status: "in_progress" }] },
+			];
+			const ctx = makeContext(
+				{ mode: "tui", hasUI: true, cwd: "/tmp/project" },
+				{
+					getBranch: () => branchWithTodo(phases) as never,
+					getCwd: () => "/tmp/project",
+					getSessionFile: () => "/tmp/project/session.jsonl",
+				},
+			);
+			await dispatch(
+				handlers,
+				"session_start",
+				{ type: "session_start", reason: "startup" },
+				ctx,
+			);
+			const command = commandHandlers.get("todo");
+			expect(command).toBeDefined();
+			if (!command) return;
+			await command("done finish", ctx as ExtensionCommandContext);
+			expect(eventsEmitted).toHaveLength(1);
+			expect(eventsEmitted[0]).toEqual({
+				channel: "desktop-notify:request",
+				data: {
+					title: "Todo",
+					body: "Completed 1 todo task",
+					type: "todo-completed",
+					urgency: "normal",
+					sound: "info",
+				},
+			});
+		} finally {
+			if (originalTermProgram === undefined) delete process.env.TERM_PROGRAM;
+			else process.env.TERM_PROGRAM = originalTermProgram;
+		}
+	});
+
+	it("does not let EventBus delivery failures affect a mutation", async () => {
+		const originalTermProgram = process.env.TERM_PROGRAM;
+		process.env.TERM_PROGRAM = "kitty";
+		try {
+			const { api, handlers, tools } = makeRecordingAPI();
+			api.events.emit = () => {
+				throw new Error("desktop notifier absent");
+			};
+			todosExtension(api);
+			sandboxAgentDir();
+			const phases = [
+				{ name: "Work", tasks: [{ content: "finish", status: "in_progress" }] },
+			];
+			const ctx = makeContext(
+				{ mode: "tui", hasUI: true, cwd: "/tmp/project" },
+				{ getBranch: () => branchWithTodo(phases) as never },
+			);
+			await dispatch(
+				handlers,
+				"session_start",
+				{ type: "session_start", reason: "startup" },
+				ctx,
+			);
+			const tool = tools.find((candidate) => candidate.name === "todo");
+			expect(tool).toBeDefined();
+			if (!tool) return;
+			const result = await tool.execute!(
+				"safe",
+				{ op: "done", task: "finish" },
+				undefined,
+				undefined,
+				ctx,
+			);
+			expect(
+				(result.details as { phases: typeof phases }).phases[0]?.tasks[0]
+					?.status,
+			).toBe("completed");
+		} finally {
+			if (originalTermProgram === undefined) delete process.env.TERM_PROGRAM;
+			else process.env.TERM_PROGRAM = originalTermProgram;
+		}
+	});
+
+	it("keeps notification requests silent outside eligible TUI terminals", async () => {
+		const originalTermProgram = process.env.TERM_PROGRAM;
+		process.env.TERM_PROGRAM = "xterm";
+		try {
+			const { api, handlers, tools, eventsEmitted } = makeRecordingAPI();
+			todosExtension(api);
+			sandboxAgentDir();
+			const phases = [
+				{ name: "Work", tasks: [{ content: "finish", status: "in_progress" }] },
+			];
+			const ctx = makeContext(
+				{ mode: "print", hasUI: false, cwd: "/tmp/project" },
+				{
+					getBranch: () => branchWithTodo(phases) as never,
+					getCwd: () => "/tmp/project",
+					getSessionFile: () => "/tmp/project/session.jsonl",
+				},
+			);
+			await dispatch(
+				handlers,
+				"session_start",
+				{ type: "session_start", reason: "startup" },
+				ctx,
+			);
+			const tool = tools.find((candidate) => candidate.name === "todo");
+			expect(tool).toBeDefined();
+			if (!tool) return;
+			await tool.execute!(
+				"silent",
+				{ op: "done", task: "finish" },
+				undefined,
+				undefined,
+				ctx,
+			);
+			await dispatch(handlers, "session_tree", { type: "session_tree" }, ctx);
+			expect(eventsEmitted).toEqual([]);
+		} finally {
+			if (originalTermProgram === undefined) delete process.env.TERM_PROGRAM;
+			else process.env.TERM_PROGRAM = originalTermProgram;
+		}
+	});
+
+	it("configures settings through /todos-configure and reloads", async () => {
+		const { api, commandHandlers } = makeRecordingAPI();
+		todosExtension(api);
+		const agent = sandboxAgentDir();
+		const ctx = makeContext({ mode: "tui", hasUI: true, cwd: "/tmp/project" });
+		let confirms = 0;
+		let reloaded = 0;
+		ctx.ui.confirm = async () => {
+			confirms++;
+			return confirms === 1;
+		};
+		ctx.ui.input = async () => "2";
+		ctx.ui.select = async () => "preferred";
+		(ctx as ExtensionCommandContext).reload = async () => {
+			reloaded++;
+		};
+
+		const command = commandHandlers.get("todos-configure");
+		expect(command).toBeDefined();
+		if (!command) return;
+		await command("", ctx as ExtensionCommandContext);
+		expect(
+			JSON.parse(fs.readFileSync(path.join(agent, "todo.json"), "utf8")),
+		).toEqual({
+			enabled: true,
+			reminders: false,
+			remindersMax: 2,
+			eager: "preferred",
+		});
+		expect(reloaded).toBe(1);
 	});
 
 	it("the todo tool executes against branch-synced state", async () => {

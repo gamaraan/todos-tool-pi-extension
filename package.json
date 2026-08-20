@@ -1,6 +1,6 @@
 {
   "name": "@gamaraan/todos-tool",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "pi coding-agent extension: an Oh My Pi (OMP)-style phased todo tool with reminders, /todo configuration, HUD, and optional desktop notification requests.",
   "keywords": ["pi-package", "todo", "todos", "task-tracking", "omp"],
   "license": "MIT",

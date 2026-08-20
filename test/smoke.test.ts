@@ -250,6 +250,80 @@ describe("todos extension factory", () => {
 		expect(tool.prepareArguments?.({ task: "x" })).toEqual({ task: "x" });
 	});
 
+	it("removes closed todo rows and completed phases from the HUD", async () => {
+		const { api, handlers, tools } = makeRecordingAPI();
+		todosExtension(api);
+		sandboxAgentDir();
+		const phases = [
+			{
+				name: "Skills",
+				tasks: [
+					{ content: "finish", status: "in_progress" },
+					{ content: "next", status: "pending" },
+				],
+			},
+			{
+				name: "Later",
+				tasks: [{ content: "later task", status: "pending" }],
+			},
+		];
+		const widgetUpdates: unknown[] = [];
+		const ctx = makeContext(
+			{ mode: "tui", hasUI: true, cwd: "/tmp/project" },
+			{
+				getBranch: () => branchWithTodo(phases) as never,
+				getCwd: () => "/tmp/project",
+				getSessionFile: () => "/tmp/project/session.jsonl",
+			},
+		);
+		ctx.ui.setWidget = ((_key: string, content: unknown) => {
+			widgetUpdates.push(content);
+		}) as never;
+
+		await dispatch(
+			handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" },
+			ctx,
+		);
+		const tool = tools.find((candidate) => candidate.name === "todo");
+		expect(tool).toBeDefined();
+		if (!tool) return;
+		widgetUpdates.length = 0;
+
+		await tool.execute!(
+			"complete-first",
+			{ op: "done", task: "finish" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		const afterFirst = widgetUpdates.at(-1) as string[];
+		const afterFirstText = afterFirst
+			.join("\n")
+			.replace(/\x1b\[[0-9;]*m/g, "");
+		expect(afterFirstText).not.toContain("finish");
+		expect(afterFirstText).toContain("next");
+		expect(afterFirstText).toContain("I. Skills  1/2");
+
+		await tool.execute!(
+			"complete-second",
+			{ op: "done", task: "next" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		const afterSecond = widgetUpdates.at(-1) as string[];
+		const afterSecondText = afterSecond
+			.join("\n")
+			.replace(/\x1b\[[0-9;]*m/g, "");
+		expect(afterSecondText).not.toContain("Skills");
+		expect(afterSecondText).not.toContain("finish");
+		expect(afterSecondText).not.toContain("next");
+		expect(afterSecondText).toContain("Later");
+		expect(afterSecondText).toContain("2/3 done");
+	});
+
 	it("emits completion and blocked notifications for successful TUI mutations", async () => {
 		const originalTermProgram = process.env.TERM_PROGRAM;
 		process.env.TERM_PROGRAM = "kitty";

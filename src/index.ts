@@ -67,7 +67,7 @@ import {
 import { executeTodoOp } from "./execute.ts";
 import { TODO_REMINDER_CUSTOM_TYPE, TodoTracker } from "./tracker.ts";
 import { USER_TODO_EDIT_CUSTOM_TYPE } from "./persistence.ts";
-import { clonePhases, inferTodoOp } from "./state.ts";
+import { clonePhases, inferTodoOp, isClosedTodo } from "./state.ts";
 import {
 	deriveTodoNotifications,
 	supportsTodoTerminalNotifications,
@@ -172,8 +172,30 @@ export default function todosExtension(pi: ExtensionAPI): void {
 	// =========================================================================
 
 	function updateHud(ctx: ExtensionContext): void {
-		const nonEmpty = phases.filter((phase) => phase.tasks.length > 0);
-		if (nonEmpty.length === 0 || ctx.mode === "print" || ctx.mode === "json") {
+		// Keep the full plan and its original phase numbers, but scroll the HUD
+		// past completed phases and rows. The first visible phase is the current
+		// work window; later phases retain all rows until they become current.
+		const firstOpenPhaseIndex = phases.findIndex((phase) =>
+			phase.tasks.some((task) => !isClosedTodo(task)),
+		);
+		const visiblePhases =
+			firstOpenPhaseIndex === -1
+				? []
+				: phases
+						.map((phase, index) => ({
+							phase,
+							index,
+							openTasks: phase.tasks.filter((task) => !isClosedTodo(task)),
+						}))
+						.filter(
+							({ index, openTasks }) =>
+								index >= firstOpenPhaseIndex && openTasks.length > 0,
+						);
+		if (
+			visiblePhases.length === 0 ||
+			ctx.mode === "print" ||
+			ctx.mode === "json"
+		) {
 			ctx.ui.setWidget(HUD_WIDGET_KEY, undefined);
 			return;
 		}
@@ -181,24 +203,27 @@ export default function todosExtension(pi: ExtensionAPI): void {
 		const display = (text: string): string => replaceTabs(sanitizeText(text));
 		const lines: string[] = [];
 		const title = theme.fg("toolTitle", theme.bold("Todo"));
-		let totalTasks = 0;
-		let totalClosed = 0;
-		for (let p = 0; p < nonEmpty.length; p++) {
-			const phase = nonEmpty[p];
-			if (phase === undefined) continue;
-			const done = phase.tasks.filter(
-				(task) => task.status === "completed" || task.status === "abandoned",
-			).length;
-			totalTasks += phase.tasks.length;
-			totalClosed += done;
+		const totalTasks = phases.reduce(
+			(total, phase) => total + phase.tasks.length,
+			0,
+		);
+		const totalClosed = phases.reduce(
+			(total, phase) =>
+				total + phase.tasks.filter((task) => isClosedTodo(task)).length,
+			0,
+		);
+		for (const visiblePhase of visiblePhases) {
+			const { phase, index, openTasks } = visiblePhase;
+			const done = phase.tasks.length - openTasks.length;
 			const header = theme.fg(
 				"accent",
-				theme.bold(`${phaseRomanNumeral(p + 1)}. ${display(phase.name)}`),
+				theme.bold(`${phaseRomanNumeral(index + 1)}. ${display(phase.name)}`),
 			);
 			lines.push(
 				`${header}  ${theme.fg("dim", `${done}/${phase.tasks.length}`)}`,
 			);
-			for (const task of phase.tasks) {
+			const tasks = index === firstOpenPhaseIndex ? openTasks : phase.tasks;
+			for (const task of tasks) {
 				const label = display(task.content);
 				switch (task.status) {
 					case "completed":

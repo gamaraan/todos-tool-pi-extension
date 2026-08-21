@@ -250,21 +250,29 @@ describe("todos extension factory", () => {
 		expect(tool.prepareArguments?.({ task: "x" })).toEqual({ task: "x" });
 	});
 
-	it("removes closed todo rows and completed phases from the HUD", async () => {
+	it("scrolls the HUD while preserving original phase numbers", async () => {
 		const { api, handlers, tools } = makeRecordingAPI();
 		todosExtension(api);
 		sandboxAgentDir();
 		const phases = [
 			{
-				name: "Skills",
+				name: "Foundation",
+				tasks: [{ content: "foundation done", status: "completed" }],
+			},
+			{
+				name: "Agents",
 				tasks: [
+					{ content: "already finished", status: "completed" },
 					{ content: "finish", status: "in_progress" },
 					{ content: "next", status: "pending" },
 				],
 			},
 			{
-				name: "Later",
-				tasks: [{ content: "later task", status: "pending" }],
+				name: "Transport",
+				tasks: [
+					{ content: "transport done", status: "completed" },
+					{ content: "later task", status: "pending" },
+				],
 			},
 		];
 		const widgetUpdates: unknown[] = [];
@@ -289,8 +297,18 @@ describe("todos extension factory", () => {
 		const tool = tools.find((candidate) => candidate.name === "todo");
 		expect(tool).toBeDefined();
 		if (!tool) return;
-		widgetUpdates.length = 0;
 
+		const initialText = (widgetUpdates.at(-1) as string[])
+			.join("\n")
+			.replace(/\x1b\[[0-9;]*m/g, "");
+		expect(initialText).toContain("3/6 done");
+		expect(initialText).not.toContain("I. Foundation");
+		expect(initialText).toContain("II. Agents  1/3");
+		expect(initialText).not.toContain("already finished");
+		expect(initialText).toContain("III. Transport  1/2");
+		expect(initialText).toContain("transport done");
+
+		widgetUpdates.length = 0;
 		await tool.execute!(
 			"complete-first",
 			{ op: "done", task: "finish" },
@@ -298,13 +316,13 @@ describe("todos extension factory", () => {
 			undefined,
 			ctx,
 		);
-		const afterFirst = widgetUpdates.at(-1) as string[];
-		const afterFirstText = afterFirst
+		const afterFirstText = (widgetUpdates.at(-1) as string[])
 			.join("\n")
 			.replace(/\x1b\[[0-9;]*m/g, "");
+		expect(afterFirstText).toContain("II. Agents  2/3");
 		expect(afterFirstText).not.toContain("finish");
 		expect(afterFirstText).toContain("next");
-		expect(afterFirstText).toContain("I. Skills  1/2");
+		expect(afterFirstText).toContain("transport done");
 
 		await tool.execute!(
 			"complete-second",
@@ -313,15 +331,14 @@ describe("todos extension factory", () => {
 			undefined,
 			ctx,
 		);
-		const afterSecond = widgetUpdates.at(-1) as string[];
-		const afterSecondText = afterSecond
+		const afterSecondText = (widgetUpdates.at(-1) as string[])
 			.join("\n")
 			.replace(/\x1b\[[0-9;]*m/g, "");
-		expect(afterSecondText).not.toContain("Skills");
-		expect(afterSecondText).not.toContain("finish");
-		expect(afterSecondText).not.toContain("next");
-		expect(afterSecondText).toContain("Later");
-		expect(afterSecondText).toContain("2/3 done");
+		expect(afterSecondText).not.toContain("Agents");
+		expect(afterSecondText).toContain("III. Transport  1/2");
+		expect(afterSecondText).not.toContain("transport done");
+		expect(afterSecondText).toContain("later task");
+		expect(afterSecondText).toContain("5/6 done");
 	});
 
 	it("emits completion and blocked notifications for successful TUI mutations", async () => {

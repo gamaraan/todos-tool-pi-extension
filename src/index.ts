@@ -172,15 +172,25 @@ export default function todosExtension(pi: ExtensionAPI): void {
 	// =========================================================================
 
 	function updateHud(ctx: ExtensionContext): void {
-		// Keep closed work in the persisted todo state and progress counts, but
-		// remove it from the HUD's visible rows so the open work walks upward as
-		// the agent completes tasks. A phase disappears once it has no open rows.
-		const visiblePhases = phases
-			.map((phase) => ({
-				phase,
-				openTasks: phase.tasks.filter((task) => !isClosedTodo(task)),
-			}))
-			.filter(({ openTasks }) => openTasks.length > 0);
+		// Keep the full plan and its original phase numbers, but scroll the HUD
+		// past completed phases and rows. The first visible phase is the current
+		// work window; later phases retain all rows until they become current.
+		const firstOpenPhaseIndex = phases.findIndex((phase) =>
+			phase.tasks.some((task) => !isClosedTodo(task)),
+		);
+		const visiblePhases =
+			firstOpenPhaseIndex === -1
+				? []
+				: phases
+						.map((phase, index) => ({
+							phase,
+							index,
+							openTasks: phase.tasks.filter((task) => !isClosedTodo(task)),
+						}))
+						.filter(
+							({ index, openTasks }) =>
+								index >= firstOpenPhaseIndex && openTasks.length > 0,
+						);
 		if (
 			visiblePhases.length === 0 ||
 			ctx.mode === "print" ||
@@ -202,19 +212,18 @@ export default function todosExtension(pi: ExtensionAPI): void {
 				total + phase.tasks.filter((task) => isClosedTodo(task)).length,
 			0,
 		);
-		for (let p = 0; p < visiblePhases.length; p++) {
-			const visiblePhase = visiblePhases[p];
-			if (visiblePhase === undefined) continue;
-			const { phase, openTasks } = visiblePhase;
+		for (const visiblePhase of visiblePhases) {
+			const { phase, index, openTasks } = visiblePhase;
 			const done = phase.tasks.length - openTasks.length;
 			const header = theme.fg(
 				"accent",
-				theme.bold(`${phaseRomanNumeral(p + 1)}. ${display(phase.name)}`),
+				theme.bold(`${phaseRomanNumeral(index + 1)}. ${display(phase.name)}`),
 			);
 			lines.push(
 				`${header}  ${theme.fg("dim", `${done}/${phase.tasks.length}`)}`,
 			);
-			for (const task of openTasks) {
+			const tasks = index === firstOpenPhaseIndex ? openTasks : phase.tasks;
+			for (const task of tasks) {
 				const label = display(task.content);
 				switch (task.status) {
 					case "completed":

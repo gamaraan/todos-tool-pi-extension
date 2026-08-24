@@ -67,7 +67,7 @@ import {
 import { executeTodoOp } from "./execute.ts";
 import { TODO_REMINDER_CUSTOM_TYPE, TodoTracker } from "./tracker.ts";
 import { USER_TODO_EDIT_CUSTOM_TYPE } from "./persistence.ts";
-import { clonePhases, inferTodoOp } from "./state.ts";
+import { clonePhases, inferTodoOp, isClosedTodo } from "./state.ts";
 import {
 	deriveTodoNotifications,
 	supportsTodoTerminalNotifications,
@@ -171,34 +171,90 @@ export default function todosExtension(pi: ExtensionAPI): void {
 	// HUD widget
 	// =========================================================================
 
+	/**
+	 * Lines pi's widget viewport shows before appending "... (widget truncated)".
+	 * Mirrors `InteractiveMode.MAX_WIDGET_LINES` (private upstream); if that
+	 * constant changes, bump this to match or the fits/no-scroll boundary drifts.
+	 */
+	const WIDGET_MAX_LINES = 10;
+
 	function updateHud(ctx: ExtensionContext): void {
-		const nonEmpty = phases.filter((phase) => phase.tasks.length > 0);
-		if (nonEmpty.length === 0 || ctx.mode === "print" || ctx.mode === "json") {
+		// Keep the full plan and its original phase numbers. While the whole list
+		// fits the widget there is nothing to gain by hiding completed phases, so
+		// render every phase and task and let the completed work stay in view.
+		// Once it outgrows the widget, scroll the HUD past completed phases and
+		// rows: the first visible phase becomes the current work window, and later
+		// phases retain all rows until they become current.
+		if (ctx.mode === "print" || ctx.mode === "json") {
+			ctx.ui.setWidget(HUD_WIDGET_KEY, undefined);
+			return;
+		}
+		const hasOpenTask = phases.some((phase) =>
+			phase.tasks.some((task) => !isClosedTodo(task)),
+		);
+		if (!hasOpenTask) {
 			ctx.ui.setWidget(HUD_WIDGET_KEY, undefined);
 			return;
 		}
 		const theme = ctx.ui.theme;
 		const display = (text: string): string => replaceTabs(sanitizeText(text));
-		const lines: string[] = [];
 		const title = theme.fg("toolTitle", theme.bold("Todo"));
-		let totalTasks = 0;
-		let totalClosed = 0;
-		for (let p = 0; p < nonEmpty.length; p++) {
-			const phase = nonEmpty[p];
-			if (phase === undefined) continue;
-			const done = phase.tasks.filter(
-				(task) => task.status === "completed" || task.status === "abandoned",
-			).length;
-			totalTasks += phase.tasks.length;
-			totalClosed += done;
+		const totalTasks = phases.reduce(
+			(total, phase) => total + phase.tasks.length,
+			0,
+		);
+		const totalClosed = phases.reduce(
+			(total, phase) =>
+				total + phase.tasks.filter((task) => isClosedTodo(task)).length,
+			0,
+		);
+		// Full unscrolled line count: one title line plus, per non-empty phase,
+		// a header line and one line per task. When that fits the widget, skip the
+		// scroll so completed phases stop scrolling out of view.
+		const fullLineCount =
+			1 +
+			phases.reduce(
+				(total, phase) =>
+					total + (phase.tasks.length > 0 ? 1 + phase.tasks.length : 0),
+				0,
+			);
+		const scroll = fullLineCount > WIDGET_MAX_LINES;
+		const firstOpenPhaseIndex = scroll
+			? phases.findIndex((phase) =>
+					phase.tasks.some((task) => !isClosedTodo(task)),
+			)
+			: -1;
+		const visiblePhases = scroll
+			? phases
+					.map((phase, index) => ({
+						phase,
+						index,
+						openTasks: phase.tasks.filter((task) => !isClosedTodo(task)),
+					}))
+					.filter(
+						({ index, openTasks }) =>
+							index >= firstOpenPhaseIndex && openTasks.length > 0,
+					)
+			: phases
+					.map((phase, index) => ({
+						phase,
+						index,
+						openTasks: phase.tasks.filter((task) => !isClosedTodo(task)),
+					}))
+					.filter(({ phase }) => phase.tasks.length > 0);
+		const lines: string[] = [];
+		for (const visiblePhase of visiblePhases) {
+			const { phase, index, openTasks } = visiblePhase;
+			const done = phase.tasks.length - openTasks.length;
 			const header = theme.fg(
 				"accent",
-				theme.bold(`${phaseRomanNumeral(p + 1)}. ${display(phase.name)}`),
+				theme.bold(`${phaseRomanNumeral(index + 1)}. ${display(phase.name)}`),
 			);
 			lines.push(
 				`${header}  ${theme.fg("dim", `${done}/${phase.tasks.length}`)}`,
 			);
-			for (const task of phase.tasks) {
+			const tasks = index === firstOpenPhaseIndex ? openTasks : phase.tasks;
+			for (const task of tasks) {
 				const label = display(task.content);
 				switch (task.status) {
 					case "completed":

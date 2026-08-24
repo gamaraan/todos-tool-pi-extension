@@ -250,6 +250,159 @@ describe("todos extension factory", () => {
 		expect(tool.prepareArguments?.({ task: "x" })).toEqual({ task: "x" });
 	});
 
+	it("scrolls the HUD while preserving original phase numbers", async () => {
+		const { api, handlers, tools } = makeRecordingAPI();
+		todosExtension(api);
+		sandboxAgentDir();
+		const phases = [
+			{
+				name: "Foundation",
+				tasks: [{ content: "foundation done", status: "completed" }],
+			},
+			{
+				name: "Agents",
+				tasks: [
+					{ content: "already finished", status: "completed" },
+					{ content: "finish", status: "in_progress" },
+					{ content: "next", status: "pending" },
+				],
+			},
+			{
+				name: "Transport",
+				tasks: [
+					{ content: "transport done", status: "completed" },
+					{ content: "later task", status: "pending" },
+				],
+			},
+			{
+				name: "Polish",
+				tasks: [
+					{ content: "polish one", status: "pending" },
+					{ content: "polish two", status: "pending" },
+					{ content: "polish three", status: "pending" },
+				],
+			},
+		];
+		const widgetUpdates: unknown[] = [];
+		const ctx = makeContext(
+			{ mode: "tui", hasUI: true, cwd: "/tmp/project" },
+			{
+				getBranch: () => branchWithTodo(phases) as never,
+				getCwd: () => "/tmp/project",
+				getSessionFile: () => "/tmp/project/session.jsonl",
+			},
+		);
+		ctx.ui.setWidget = ((_key: string, content: unknown) => {
+			widgetUpdates.push(content);
+		}) as never;
+
+		await dispatch(
+			handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" },
+			ctx,
+		);
+		const tool = tools.find((candidate) => candidate.name === "todo");
+		expect(tool).toBeDefined();
+		if (!tool) return;
+
+		const initialText = (widgetUpdates.at(-1) as string[])
+			.join("\n")
+			.replace(/\x1b\[[0-9;]*m/g, "");
+		expect(initialText).toContain("3/9 done");
+		expect(initialText).not.toContain("I. Foundation");
+		expect(initialText).toContain("II. Agents  1/3");
+		expect(initialText).not.toContain("already finished");
+		expect(initialText).toContain("III. Transport  1/2");
+		expect(initialText).toContain("transport done");
+
+		widgetUpdates.length = 0;
+		await tool.execute!(
+			"complete-first",
+			{ op: "done", task: "finish" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		const afterFirstText = (widgetUpdates.at(-1) as string[])
+			.join("\n")
+			.replace(/\x1b\[[0-9;]*m/g, "");
+		expect(afterFirstText).toContain("II. Agents  2/3");
+		expect(afterFirstText).not.toContain("finish");
+		expect(afterFirstText).toContain("next");
+		expect(afterFirstText).toContain("transport done");
+
+		await tool.execute!(
+			"complete-second",
+			{ op: "done", task: "next" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		const afterSecondText = (widgetUpdates.at(-1) as string[])
+			.join("\n")
+			.replace(/\x1b\[[0-9;]*m/g, "");
+		expect(afterSecondText).not.toContain("Agents");
+		expect(afterSecondText).toContain("III. Transport  1/2");
+		expect(afterSecondText).not.toContain("transport done");
+		expect(afterSecondText).toContain("later task");
+		expect(afterSecondText).toContain("5/9 done");
+	});
+
+	it("shows the full plan without scrolling when it fits the widget", async () => {
+		const { api, handlers, tools } = makeRecordingAPI();
+		todosExtension(api);
+		sandboxAgentDir();
+		// Two phases, three tasks: 1 title + 2 headers + 3 tasks = 6 lines, which
+		// fits the 10-line widget, so the completed Foundation phase stays visible.
+		const phases = [
+			{
+				name: "Foundation",
+				tasks: [{ content: "foundation done", status: "completed" }],
+			},
+			{
+				name: "Agents",
+				tasks: [
+					{ content: "already finished", status: "completed" },
+					{ content: "finish", status: "in_progress" },
+				],
+			},
+		];
+		const widgetUpdates: unknown[] = [];
+		const ctx = makeContext(
+			{ mode: "tui", hasUI: true, cwd: "/tmp/project" },
+			{
+				getBranch: () => branchWithTodo(phases) as never,
+				getCwd: () => "/tmp/project",
+				getSessionFile: () => "/tmp/project/session.jsonl",
+			},
+		);
+		ctx.ui.setWidget = ((_key: string, content: unknown) => {
+			widgetUpdates.push(content);
+		}) as never;
+
+		await dispatch(
+			handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" },
+			ctx,
+		);
+		const tool = tools.find((candidate) => candidate.name === "todo");
+		expect(tool).toBeDefined();
+		if (!tool) return;
+
+		const text = (widgetUpdates.at(-1) as string[])
+			.join("\n")
+			.replace(/\x1b\[[0-9;]*m/g, "");
+		// Completed phase is NOT scrolled out of view once the plan fits the widget.
+		expect(text).toContain("I. Foundation");
+		expect(text).toContain("foundation done");
+		expect(text).toContain("II. Agents  1/2");
+		// The completed task within the current phase stays visible too.
+		expect(text).toContain("already finished");
+		expect(text).toContain("2/3 done");
+	});
+
 	it("emits completion and blocked notifications for successful TUI mutations", async () => {
 		const originalTermProgram = process.env.TERM_PROGRAM;
 		process.env.TERM_PROGRAM = "kitty";

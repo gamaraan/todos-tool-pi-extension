@@ -36,6 +36,7 @@ Oh My Pi (OMP) todo tool, todo tracker, and `/todo` command to pi.
 | `src/command.ts` | `/todo` controller + `$EDITOR` fallback | `todo-command-controller.ts` |
 | `src/config.ts` | `todo.json` loading (global + trusted project) | settings-schema.ts subset, next-prompt config pattern |
 | `src/prompts.ts` | Tool description + eager/nudge templates (flattened from Handlebars) | `prompts/*.md` |
+| `skills/todo-discipline/SKILL.md` | Bundled load-on-demand skill (contributed via `resources_discover` while enabled): mandates phased `init` before work and immediate per-task `done` marking | new (extension-facing equivalent of omp's in-core system prompts; no omp counterpart) |
 | `test/` | Unit tests; **port from** `oh-my-pi/packages/coding-agent/test/tools/todo.test.ts` and `test/modes/controllers/todo-command-controller.test.ts` | |
 
 ## Conventions
@@ -46,6 +47,12 @@ Oh My Pi (OMP) todo tool, todo tracker, and `/todo` command to pi.
 - **Prompt text lives in `src/prompts.ts`** as template functions. If OMP's
   prompt `.md` files change, port the changes here (flattened, no
   Handlebars).
+- **The bundled skill is behavior, not docs.** `skills/todo-discipline/SKILL.md`
+  is injected via the `resources_discover` handler in `src/index.ts`, gated on
+  `config.enabled` (pi emits `session_start` before `resources_discover`, so
+  config is always resolved first). Keep its name distinct from any common
+  user-authored skill (e.g. `plan-execution`) to avoid pi name-collision
+  warnings.
 - **Errors are thrown.** pi's `ToolDefinition.execute` has no `isError`
   result field — throwing is the error signal. `executeTodoOp` returns
   `failed` and `index.ts` throws `outcome.summary`.

@@ -50,6 +50,13 @@ unblock | append | view`.
 - **Mid-run nudge** — after 12 successful mutating tool results (bash/edit/
   write/eval) with incomplete todos, a hidden steer message asks the agent to
   mark finished tasks done (≤2 per prompt cycle).
+- **Bundled `todo-discipline` skill** — while the tool is enabled, the
+  extension contributes a load-on-demand skill (via pi's
+  `resources_discover`) whose description sits in every model's system
+  prompt: it mandates a phased `init` before any 3+ step request and marking
+  each individual task `done` the moment that task finishes — never
+  retro-batched at the end of a phase or session. Load it explicitly with
+  `/skill:todo-discipline`.
 - **Completion reminder** — when the agent settles with incomplete todos and
   isn't waiting for user input, a reminder listing the remaining items is
   injected and a fresh turn is triggered (`todo.reminders`,
@@ -205,6 +212,7 @@ Faithful port, with these deliberate adaptations:
 | `$EDITOR` for `/todo edit` | Built-in pi editor dialog in the TUI; `$EDITOR` fallback outside it |
 | Plan-mode pause, subagent reconciliation, eager task prelude | Out of scope (pi has no core plan mode / subagents); the guarded hooks are omitted |
 | `<system-reminder>` as a `developer` message | Same text as a hidden `custom` message (pi converts these to user-role in context — the only injection mechanism extensions have) |
+| System prompts (`prompts/system/*.md`) shipped in-core | A bundled `todo-discipline` skill contributed via `resources_discover` when the tool is enabled (extensions cannot edit the system prompt builder; skills are pi's extension-facing equivalent) |
 
 ## Develop
 

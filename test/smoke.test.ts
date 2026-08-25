@@ -220,6 +220,7 @@ describe("todos extension factory", () => {
 			"session_tree",
 			"session_compact",
 			"before_agent_start",
+			"resources_discover",
 			"tool_result",
 			"agent_end",
 			"agent_settled",
@@ -235,6 +236,53 @@ describe("todos extension factory", () => {
 		expect(tool?.label).toBe("Todo");
 		expect(tool?.executionMode).toBe("sequential");
 		expect(tool?.promptSnippet).toContain("structured todo list");
+	});
+
+	it("contributes the bundled todo-discipline skill only when enabled", async () => {
+		const { api, handlers } = makeRecordingAPI();
+		todosExtension(api);
+		sandboxAgentDir();
+		const ctx = makeContext({ cwd: "/tmp/project" });
+
+		// Default config (enabled): the skill path is offered and exists on disk.
+		await dispatch(
+			handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" },
+			ctx,
+		);
+		const [enabled] = (await dispatch(
+			handlers,
+			"resources_discover",
+			{ type: "resources_discover", cwd: "/tmp/project", reason: "startup" },
+			ctx,
+		)) as [{ skillPaths?: string[] } | undefined];
+		const skillPaths = enabled?.skillPaths ?? [];
+		expect(skillPaths).toHaveLength(1);
+		const skillFile = path.join(skillPaths[0] ?? "", "todo-discipline", "SKILL.md");
+		expect(fs.existsSync(skillFile)).toBe(true);
+		const skill = fs.readFileSync(skillFile, "utf8");
+		expect(skill).toContain("name: todo-discipline");
+		expect(skill).toContain("description:");
+
+		// Globally disabled: no skill contribution.
+		fs.writeFileSync(
+			path.join(process.env.PI_CODING_AGENT_DIR ?? "", "todo.json"),
+			JSON.stringify({ enabled: false }),
+		);
+		await dispatch(
+			handlers,
+			"session_start",
+			{ type: "session_start", reason: "reload" },
+			ctx,
+		);
+		const [disabled] = (await dispatch(
+			handlers,
+			"resources_discover",
+			{ type: "resources_discover", cwd: "/tmp/project", reason: "startup" },
+			ctx,
+		)) as [{ skillPaths?: string[] } | undefined];
+		expect(disabled?.skillPaths ?? []).toHaveLength(0);
 	});
 
 	it("the tool schema requires op but prepareArguments infers it", () => {

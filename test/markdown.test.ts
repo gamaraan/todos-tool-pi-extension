@@ -77,6 +77,28 @@ describe("phasesToMarkdown / markdownToPhases round-trip", () => {
 		expect(parsed).toEqual(phases);
 	});
 
+	it("round-trips blocked tasks containing comment-like sequences", () => {
+		// Regression: the blocker-comment parser must bind to the TRAILING
+		// comment the writer emits, even when content/blocker themselves
+		// contain `-->` or a literal `<!-- blocker:`.
+		const phases: TodoPhase[] = [
+			{
+				name: "Work",
+				tasks: [
+					{ content: "do a --> b", status: "blocked", blocker: "x --> y" },
+					{
+						content: "handle <!-- blocker: sneaky --> properly",
+						status: "blocked",
+						blocker: "waiting",
+					},
+				],
+			},
+		];
+		const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown(phases));
+		expect(errors).toEqual([]);
+		expect(parsed).toEqual(phases);
+	});
+
 	it("preserves blocked status across the markdown round-trip", () => {
 		const phases: TodoPhase[] = [
 			{

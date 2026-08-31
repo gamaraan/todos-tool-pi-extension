@@ -796,3 +796,82 @@ describe("normalizeInProgressTask", () => {
 		]);
 	});
 });
+
+describe("single-line normalization of task content and phase names", () => {
+	it("collapses newlines and tabs in init items and phase names", () => {
+		const tool = makeTool();
+		const result = tool.run({
+			op: "init",
+			list: [
+				{
+					phase: "  Recon\nphase  ",
+					items: ["line1\nline2", "tabbed\ttask", "  padded  "],
+				},
+			],
+		});
+
+		expect(result.failed).toBe(false);
+		expect(result.phases.map((phase) => phase.name)).toEqual(["Recon phase"]);
+		expect(result.phases[0]?.tasks.map((task) => task.content)).toEqual([
+			"line1 line2",
+			"tabbed task",
+			"padded",
+		]);
+	});
+
+	it("rejects whitespace-only items and phase names in init", () => {
+		const tool = makeTool();
+		const blankItem = tool.run({ op: "init", items: ["ok", "  \n "] });
+		expect(blankItem.failed).toBe(true);
+		expect(summaryText(blankItem)).toContain("Empty task content");
+
+		const blankPhase = tool.run({
+			op: "init",
+			list: [{ phase: " \t ", items: ["ok"] }],
+		});
+		expect(blankPhase.failed).toBe(true);
+		expect(summaryText(blankPhase)).toContain("Empty phase name");
+	});
+
+	it("detects duplicates after normalization", () => {
+		const tool = makeTool();
+		const result = tool.run({ op: "init", items: ["a  b", "a\nb"] });
+		expect(result.failed).toBe(true);
+		expect(summaryText(result)).toContain('Duplicate task "a b"');
+	});
+
+	it("normalizes append phase names and items", () => {
+		const tool = makeTool();
+		const init = tool.run({ op: "init", items: ["one"] });
+		expect(init.failed).toBe(false);
+		const result = tool.run({
+			op: "append",
+			phase: "later\nphase",
+			items: ["two\nlines"],
+		});
+
+		expect(result.failed).toBe(false);
+		expect(
+			result.phases.map((phase) => [
+				phase.name,
+				phase.tasks.map((task) => task.content),
+			]),
+		).toEqual([
+			["Tasks", ["one"]],
+			["later phase", ["two lines"]],
+		]);
+	});
+
+	it("rejects whitespace-only phase and items on append", () => {
+		const tool = makeTool([{ name: "A", tasks: [] }]);
+		const blankPhase = tool.run({ op: "append", phase: "  ", items: ["x"] });
+		expect(blankPhase.failed).toBe(true);
+		expect(summaryText(blankPhase)).toContain(
+			"Missing phase name for append operation",
+		);
+
+		const blankItem = tool.run({ op: "append", phase: "A", items: ["\t"] });
+		expect(blankItem.failed).toBe(true);
+		expect(summaryText(blankItem)).toContain("Empty task content");
+	});
+});

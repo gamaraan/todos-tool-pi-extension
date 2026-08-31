@@ -211,6 +211,10 @@ Faithful port, with these deliberate adaptations:
 | Desktop notification integration | Optional named EventBus `desktop-notify:request` payloads with transitioned task names, gated to OSC 9/99-capable TUI terminals |
 | `$EDITOR` for `/todo edit` | Built-in pi editor dialog in the TUI; `$EDITOR` fallback outside it |
 | Plan-mode pause, subagent reconciliation, eager task prelude | Out of scope (pi has no core plan mode / subagents); the guarded hooks are omitted |
+| Branch replay casts persisted `phases` blindly | Structurally validated (`isTodoPhase`) first; corrupt snapshots are skipped, never crash session sync |
+| Task content / phase names stored verbatim | Whitespace runs (incl. newlines) collapsed at `init`/`append` input, same one-line guarantee as blocker `reason`; blank entries rejected |
+| Blocker-comment parse binds the first `<!-- blocker:` (lazy) | Binds the trailing comment the writer emits (greedy), so content/blockers containing `-->` or literal `<!-- blocker:` round-trip intact |
+| `/todo edit` external-editor temp file uses a predictable pid/timestamp name in tmp | `mkdtemp` (0700) + 0600 file: no pre-created symlink hijack on multi-user machines |
 | `<system-reminder>` as a `developer` message | Same text as a hidden `custom` message (pi converts these to user-role in context — the only injection mechanism extensions have) |
 | System prompts (`prompts/system/*.md`) shipped in-core | A bundled `todo-discipline` skill contributed via `resources_discover` when the tool is enabled (extensions cannot edit the system prompt builder; skills are pi's extension-facing equivalent) |
 

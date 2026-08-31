@@ -11,6 +11,7 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
 	buildSystemReminder,
 	getEditorCommand,
+	openInExternalEditor,
 	TodoCommandController,
 	type TodoCommandHost,
 } from "../src/command.ts";
@@ -460,5 +461,22 @@ describe("getEditorCommand", () => {
 describe("USER_TODO_EDIT_CUSTOM_TYPE", () => {
 	it("matches the omp custom type name", () => {
 		expect(USER_TODO_EDIT_CUSTOM_TYPE).toBe("user_todo_edit");
+	});
+});
+
+describe("openInExternalEditor", () => {
+	it("returns the file content when the editor exits 0, and cleans up", async () => {
+		const before = await fs.readdir(os.tmpdir());
+		const edited = await openInExternalEditor("cat", "secret todo prefill");
+		expect(edited).toBe("secret todo prefill");
+		const after = await fs.readdir(os.tmpdir());
+		expect(before.filter((n) => n.startsWith("todos-edit-"))).toEqual(
+			after.filter((n) => n.startsWith("todos-edit-")),
+		);
+	});
+
+	it("returns null when the editor exits non-zero", async () => {
+		const edited = await openInExternalEditor("false", "prefill");
+		expect(edited).toBeNull();
 	});
 });

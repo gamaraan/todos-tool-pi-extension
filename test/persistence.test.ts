@@ -113,4 +113,42 @@ describe("getLatestTodoPhasesFromEntries", () => {
 		restored[0]!.tasks[0]!.status = "completed";
 		expect(phasesA[0]?.tasks[0]?.status).toBe("pending");
 	});
+
+	it("skips structurally invalid phases instead of crashing, custom entry", () => {
+		// A hand-edited/corrupt session file must not take the extension down:
+		// fall through to the previous durable record.
+		const corrupt = [{ name: "X", tasks: "not-an-array" }];
+		const entries = [
+			messageEntry("toolResult", "todo", { phases: phasesC }),
+			customEntry(USER_TODO_EDIT_CUSTOM_TYPE, { phases: corrupt }),
+		];
+		expect(getLatestTodoPhasesFromEntries(entries)).toEqual(phasesC);
+	});
+
+	it("skips structurally invalid phases in toolResult details", () => {
+		const corrupt = [{ name: 42, tasks: [{ content: "x", status: "pending" }] }];
+		const entries = [
+			messageEntry("toolResult", "todo", { phases: phasesA }),
+			messageEntry("toolResult", "todo", { phases: corrupt }),
+		];
+		expect(getLatestTodoPhasesFromEntries(entries)).toEqual(phasesA);
+	});
+
+	it("rejects tasks with unknown statuses", () => {
+		const corrupt = [
+			{ name: "X", tasks: [{ content: "x", status: "weird" }] },
+		];
+		const entries = [
+			customEntry(USER_TODO_EDIT_CUSTOM_TYPE, { phases: corrupt }),
+		];
+		expect(getLatestTodoPhasesFromEntries(entries)).toEqual([]);
+	});
+
+	it("honors a valid empty phases array as a cleared list", () => {
+		const entries = [
+			messageEntry("toolResult", "todo", { phases: phasesA }),
+			customEntry(USER_TODO_EDIT_CUSTOM_TYPE, { phases: [] }),
+		];
+		expect(getLatestTodoPhasesFromEntries(entries)).toEqual([]);
+	});
 });

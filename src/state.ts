@@ -349,6 +349,19 @@ function getTaskTargets(
 /** Phase name for `init` given a flat `items` list with no explicit `phase`. */
 const DEFAULT_INIT_PHASE = "Tasks";
 
+/**
+ * Collapse whitespace runs (incl. newlines) to single spaces — the same
+ * one-line guarantee the `block` op gives `reason`. Task content and phase
+ * names ride on single lines everywhere downstream: the Markdown checklist
+ * round-trip (a raw newline splits one task into two input lines and breaks
+ * re-import), the HUD rows, and the summary text. Normalizing at this
+ * boundary keeps every consumer one-line-safe without touching identity
+ * (targeting ops reference the stored, normalized text).
+ */
+function normalizeSingleLine(value: string): string {
+	return value.replace(/\s+/g, " ").trim();
+}
+
 function initPhases(entry: TodoParams, errors: string[]): TodoPhase[] {
 	// Models routinely flatten the single-phase init into `{op:"init", items:[...]}`
 	// (optionally with a bare `phase`) instead of the canonical
@@ -364,22 +377,37 @@ function initPhases(entry: TodoParams, errors: string[]): TodoPhase[] {
 		return [];
 	}
 	// Duplicate phase names / task contents would be permanently unaddressable
-	// (every targeting op resolves the first match), so reject them up front.
+	// (every targeting op resolves the first match), so reject them up front —
+	// detected AFTER normalization so `a  b` and `a b` collide correctly.
 	const seenPhases = new Set<string>();
 	const seenTasks = new Set<string>();
+	const normalized: Array<{ phase: string; items: string[] }> = [];
 	for (const listEntry of list) {
-		if (seenPhases.has(listEntry.phase)) {
-			errors.push(`Duplicate phase "${listEntry.phase}" in init list`);
+		const phaseName = normalizeSingleLine(listEntry.phase);
+		if (!phaseName) {
+			errors.push("Empty phase name in init list");
+			continue;
 		}
-		seenPhases.add(listEntry.phase);
-		for (const content of listEntry.items) {
+		if (seenPhases.has(phaseName)) {
+			errors.push(`Duplicate phase "${phaseName}" in init list`);
+		}
+		seenPhases.add(phaseName);
+		const items: string[] = [];
+		for (const rawContent of listEntry.items) {
+			const content = normalizeSingleLine(rawContent);
+			if (!content) {
+				errors.push("Empty task content in init list");
+				continue;
+			}
 			if (seenTasks.has(content)) {
 				errors.push(`Duplicate task "${content}" in init list`);
 			}
 			seenTasks.add(content);
+			items.push(content);
 		}
+		normalized.push({ phase: phaseName, items });
 	}
-	return list.map((listEntry) => ({
+	return normalized.map((listEntry) => ({
 		name: listEntry.phase,
 		tasks: listEntry.items.map<TodoItem>((content) => ({
 			content,
@@ -393,7 +421,8 @@ function appendItems(
 	entry: TodoParams,
 	errors: string[],
 ): TodoPhase[] {
-	if (!entry.phase) {
+	const phaseName = entry.phase !== undefined ? normalizeSingleLine(entry.phase) : "";
+	if (!phaseName) {
 		errors.push("Missing phase name for append operation");
 		return phases;
 	}
@@ -401,12 +430,17 @@ function appendItems(
 		errors.push("Missing items for append operation");
 		return phases;
 	}
+	const normalizedItems = entry.items.map(normalizeSingleLine);
+	if (normalizedItems.some((content) => !content)) {
+		errors.push("Empty task content in append items");
+		return phases;
+	}
 
 	// Validate the whole batch before mutating so a failing op reports every
 	// duplicate and leaves nothing half-applied.
 	const seen = new Set<string>();
 	let hasDuplicate = false;
-	for (const content of entry.items) {
+	for (const content of normalizedItems) {
 		if (seen.has(content) || findTaskByContent(phases, content)) {
 			errors.push(`Task "${content}" already exists`);
 			hasDuplicate = true;
@@ -414,14 +448,13 @@ function appendItems(
 		seen.add(content);
 	}
 	if (hasDuplicate) return phases;
-
-	let phase = findPhaseByName(phases, entry.phase);
+	let phase = findPhaseByName(phases, phaseName);
 	if (!phase) {
-		phase = { name: entry.phase, tasks: [] };
+		phase = { name: phaseName, tasks: [] };
 		phases.push(phase);
 	}
 
-	for (const content of entry.items) {
+	for (const content of normalizedItems) {
 		phase.tasks.push({ content, status: "pending" });
 	}
 	return phases;

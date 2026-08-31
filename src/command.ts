@@ -576,17 +576,19 @@ export async function openInExternalEditor(
 	editorCmd: string,
 	content: string,
 ): Promise<string | null> {
-	const tmpFile = path.join(
-		os.tmpdir(),
-		`todos-edit-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.todo.md`,
-	);
+	// mkdtemp (0700, O_EXCL) instead of a predictable pid/timestamp filename:
+	// on a multi-user machine a guessed tmp name can be pre-created as a
+	// symlink and the write would follow it. The prefill can hold sensitive
+	// session data, so the file itself is 0600.
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "todos-edit-"));
+	const tmpFile = path.join(tmpDir, "todos.md");
 	try {
-		await fs.writeFile(tmpFile, content, "utf8");
+		await fs.writeFile(tmpFile, content, { encoding: "utf8", mode: 0o600 });
 		const exitCode = await runEditorProcess(editorCmd, tmpFile);
 		if (exitCode !== 0) return null;
 		return await fs.readFile(tmpFile, "utf8");
 	} finally {
-		await fs.rm(tmpFile, { force: true }).catch(() => {});
+		await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
 	}
 }
 

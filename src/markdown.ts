@@ -98,7 +98,15 @@ export function markdownToPhases(md: string): {
 			// Recover a blocked task's reason from its trailing HTML comment (see
 			// phasesToMarkdown), then strip the comment from the visible content.
 			const rawContent = (taskMatch[2] ?? "").trim();
-			const blockerMatch = /^(.*?)\s*<!--\s*blocker:\s*(.*?)\s*-->$/.exec(
+			// GREEDY content group: the writer always appends the blocker note
+			// last, so the trailing comment must win even when the visible
+			// content itself contains `-->` or a literal `<!-- blocker:` (a lazy
+			// match would split at the embedded marker and corrupt both fields;
+			// OMP's lazy regex has this bug).
+			// ponytail: content ending in a bare `<!-- blocker: x -->` with no
+			// real blocker stays ambiguous (writer emits no comment then) —
+			// fixing that needs a full escaping scheme, not a regex.
+			const blockerMatch = /^(.*)\s*<!--\s*blocker:\s*(.*?)\s*-->$/.exec(
 				rawContent,
 			);
 			if (status === "blocked" && blockerMatch) {

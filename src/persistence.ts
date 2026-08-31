@@ -13,10 +13,24 @@ import type {
 	CustomEntry,
 	SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { clonePhases } from "./state.ts";
+import { clonePhases, isTodoPhase } from "./state.ts";
 import type { TodoPhase } from "./types.ts";
 
 export const USER_TODO_EDIT_CUSTOM_TYPE = "user_todo_edit";
+
+/**
+ * Accept a persisted phases array only when every entry structurally
+ * validates. Session files are plain on-disk JSON: a hand edit, a truncated
+ * write, or a stale entry from another tool version would otherwise crash
+ * the replay (e.g. `phase.tasks` not an array) on every session start.
+ * Invalid snapshots are skipped so the scan falls through to the previous
+ * durable record.
+ */
+function validPersistedPhases(value: unknown): TodoPhase[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	if (!value.every(isTodoPhase)) return undefined;
+	return clonePhases(value);
+}
 
 /** Scan a session branch (oldest-first as returned by `getBranch()`) for the
  *  latest todo snapshot, scanning from the end backward. */
@@ -34,9 +48,8 @@ export function getLatestTodoPhasesFromEntries(
 				{ phases?: unknown } | undefined
 			>;
 			const data = customEntry.data;
-			if (data && Array.isArray(data.phases)) {
-				return clonePhases(data.phases as TodoPhase[]);
-			}
+			const restored = data ? validPersistedPhases(data.phases) : undefined;
+			if (restored) return restored;
 			continue;
 		}
 		if (entry.type !== "message") continue;
@@ -54,9 +67,9 @@ export function getLatestTodoPhasesFromEntries(
 			continue;
 
 		const details = message.details as { phases?: unknown } | undefined;
-		if (!details || !Array.isArray(details.phases)) continue;
-
-		return clonePhases(details.phases as TodoPhase[]);
+		if (!details) continue;
+		const restored = validPersistedPhases(details.phases);
+		if (restored) return restored;
 	}
 
 	return [];

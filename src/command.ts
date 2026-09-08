@@ -19,7 +19,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { applyOpsToPhases } from "./state.ts";
+import { applyOpsToPhases, validateTodoIdentities } from "./state.ts";
 import { getLatestTodoPhasesFromEntries } from "./persistence.ts";
 import {
 	markdownToPhases,
@@ -66,6 +66,8 @@ export interface TodoCommandHost {
 	openEditor(title: string, prefill: string): Promise<string | undefined>;
 	/** TUI clipboard copy via OSC 52; false when the terminal can't do it. */
 	copyToClipboard(text: string): boolean;
+	/** Ask before overwriting an existing export target; undefined = no UI, always refuse. */
+	confirmOverwrite?(filePath: string): Promise<boolean>;
 	/** $EDITOR path on a temp file; null = editor exited without saving. */
 	openExternalEditor(prefill: string): Promise<string | null>;
 }
@@ -207,11 +209,13 @@ export class TodoCommandController {
 
 	/**
 	 * True latest todo state for the user-facing /todo verbs. Reads from
-	 * session entries or falls back to the active in-memory state.
+	 * session entries or falls back to the active in-memory state only when
+	 * NO snapshot exists — a valid empty snapshot is an explicit clear and
+	 * wins over stale memory.
 	 */
 	#currentPhases(): TodoPhase[] {
 		const fromEntries = getLatestTodoPhasesFromEntries(this.host.getBranch());
-		if (fromEntries.length > 0) return fromEntries;
+		if (fromEntries !== undefined) return fromEntries;
 		return this.host.getPhases();
 	}
 
@@ -302,6 +306,28 @@ export class TodoCommandController {
 		}
 		try {
 			const target = this.#resolveTodoPath(rest);
+			// Fail closed on pre-existing targets: a symlink would silently
+			// redirect the write (TODO.md may hold unrelated content — never
+			// clobber without an explicit confirmation).
+			const existing = await fs.lstat(target).catch(() => undefined);
+			if (existing?.isSymbolicLink()) {
+				this.host.notify(
+					`Refusing to write through symlink ${target}.`,
+					"error",
+				);
+				return;
+			}
+			if (existing !== undefined) {
+				const proceed = await (this.host.confirmOverwrite?.(target) ??
+					Promise.resolve(false));
+				if (!proceed) {
+					this.host.notify(
+						`Export cancelled: ${target} already exists (pass a different path to keep it).`,
+						"warning",
+				);
+					return;
+				}
+			}
 			await fs.writeFile(target, phasesToMarkdown(phases), "utf8");
 			this.host.notify(`Wrote todos to ${target}`, "info");
 		} catch (error) {
@@ -329,6 +355,14 @@ export class TodoCommandController {
 		if (errors.length > 0) {
 			this.host.notify(
 				`Could not parse ${source}:\n  ${errors.join("\n  ")}`,
+				"error",
+			);
+			return;
+		}
+		const issues = validateTodoIdentities(phases);
+		if (issues.length > 0) {
+			this.host.notify(
+				`Could not import ${source}:\n  ${issues.join("\n  ")}`,
 				"error",
 			);
 			return;
@@ -387,6 +421,11 @@ export class TodoCommandController {
 			status: "pending",
 		});
 
+		const issues = validateTodoIdentities(next);
+		if (issues.length > 0) {
+			this.host.notify(issues.join("; "), "error");
+			return;
+		}
 		this.#commit(next, `/todo append → ${targetPhase.name}`);
 		this.host.notify(
 			`Appended to ${targetPhase.name}: ${finalContent}`,
@@ -512,10 +551,10 @@ export class TodoCommandController {
 	// ------------------------------------------------------------- editor
 
 	async #editInEditor(): Promise<void> {
-		const current = this.#currentPhases();
+		const prefill = this.#currentPhases();
 		const initialMarkdown =
-			current.length > 0
-				? phasesToMarkdown(current)
+			prefill.length > 0
+				? phasesToMarkdown(prefill)
 				: "# Todos\n- [ ] (replace this with your tasks)\n";
 
 		const edited = await this.host.openEditor("Edit todos", initialMarkdown);
@@ -530,10 +569,29 @@ export class TodoCommandController {
 			this.host.notify("No changes; todos unchanged.", "info");
 			return;
 		}
+		// The prefill snapshot is only valid if nothing else touched the list
+		// while the editor was open. Committing it otherwise silently reverts
+		// whatever the todo tool or another /todo did in between.
+		const latest = this.#currentPhases();
+		if (JSON.stringify(latest) !== JSON.stringify(prefill)) {
+			this.host.notify(
+				"Todos changed while the editor was open; aborting to avoid overwriting the newer state. Re-run /todo edit.",
+				"error",
+			);
+			return;
+		}
 		const { phases: parsed, errors } = markdownToPhases(edited);
 		if (errors.length > 0) {
 			this.host.notify(
 				`Could not parse Markdown:\n  ${errors.join("\n  ")}`,
+				"error",
+			);
+			return;
+		}
+		const issues = validateTodoIdentities(parsed);
+		if (issues.length > 0) {
+			this.host.notify(
+				`Todos not saved:\n  ${issues.join("\n  ")}`,
 				"error",
 			);
 			return;

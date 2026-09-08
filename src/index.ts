@@ -70,7 +70,11 @@ import {
 	type TodoConfig,
 } from "./config.ts";
 import { executeTodoOp } from "./execute.ts";
-import { TODO_REMINDER_CUSTOM_TYPE, TodoTracker } from "./tracker.ts";
+import {
+	TODO_REMINDER_CUSTOM_TYPE,
+	TodoTracker,
+	pruneSupersededTrackerMessages,
+} from "./tracker.ts";
 import { USER_TODO_EDIT_CUSTOM_TYPE } from "./persistence.ts";
 import { clonePhases, inferTodoOp, isClosedTodo } from "./state.ts";
 import {
@@ -520,6 +524,13 @@ export default function todosExtension(pi: ExtensionAPI): void {
 					process.stdout.write(`\x1b]52;c;${base64}\x07`);
 					return true;
 				},
+				confirmOverwrite: async (filePath: string): Promise<boolean> => {
+					if (!ctx.hasUI) return false;
+					return ctx.ui.confirm(
+						"Overwrite existing file?",
+						`"${filePath}" already exists and will be replaced.`,
+					);
+				},
 				openExternalEditor: (prefill: string) =>
 					openInExternalEditor(getEditorCommand() ?? "vi", prefill),
 			});
@@ -589,6 +600,18 @@ export default function todosExtension(pi: ExtensionAPI): void {
 		if (nudge) {
 			pi.sendMessage(nudge, { deliverAs: "steer" });
 		}
+	});
+
+	// Tracker-injected guidance (completion reminders, mid-run nudges) is
+	// only valid for the turn that consumes it; before every LLM call strip
+	// any such message a later real message superseded, so resumed/continued
+	// sessions never make the model answer an ancient "incomplete todos"
+	// reminder (it lives on in the session file; only the outgoing copy is
+	// filtered).
+	pi.on("context", async (event) => {
+		const pruned = pruneSupersededTrackerMessages(event.messages);
+		if (pruned.length === event.messages.length) return undefined;
+		return { messages: pruned as typeof event.messages };
 	});
 
 	pi.on("agent_end", async (event) => {

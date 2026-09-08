@@ -249,6 +249,28 @@ describe("todoRenderResult", () => {
 		expect(rendered).toContain("dropped task");
 	});
 
+	it("keeps the HUD's phase numbers when filtering out empty phases", () => {
+		// The HUD preserves original phase positions (Work stays "II. Work");
+		// the tool renderer filtered empties out without tracking indices.
+		const phases: TodoPhase[] = [
+			{ name: "Empty", tasks: [] },
+			{ name: "Work", tasks: [{ content: "a", status: "completed" }] },
+			{ name: "Later", tasks: [{ content: "b", status: "pending" }] },
+		];
+		const component = todoRenderResult(
+			{ content: [], details: { phases, op: "done", storage: "session" } },
+			{ expanded: true, isPartial: false },
+			makeTestTheme(),
+		);
+		const text = component.render(100).join("\n");
+		expect(text).toContain("II. Work");
+		expect(text).toContain("III. Later");
+		// "I." must be painted for Work's header — guard the actual bug
+		// (blind renumbering to "I. Work") without matching "II. Work".
+		expect(text).not.toContain(" I. Work");
+		expect(text).not.toMatch(/^I\. Work/m);
+	});
+
 	it("renders the empty-list fallback text", () => {
 		const component = todoRenderResult(
 			makeResult(

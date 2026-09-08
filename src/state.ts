@@ -126,17 +126,57 @@ export function isTodoPhase(value: unknown): value is TodoPhase {
 	const record = value as Record<string, unknown>;
 	if (typeof record.name !== "string" || !Array.isArray(record.tasks))
 		return false;
-	return record.tasks.every(
-		(task) =>
-			typeof task === "object" &&
-			task !== null &&
-			typeof (task as Record<string, unknown>).content === "string" &&
-			((task as Record<string, unknown>).status === "pending" ||
-				(task as Record<string, unknown>).status === "in_progress" ||
-				(task as Record<string, unknown>).status === "completed" ||
-				(task as Record<string, unknown>).status === "abandoned" ||
-				(task as Record<string, unknown>).status === "blocked"),
-	);
+	return record.tasks.every((task) => {
+		if (typeof task !== "object" || task === null) return false;
+		const candidate = task as Record<string, unknown>;
+		if (typeof candidate.content !== "string") return false;
+		if (
+			candidate.status !== "pending" &&
+			candidate.status !== "in_progress" &&
+			candidate.status !== "completed" &&
+			candidate.status !== "abandoned" &&
+			candidate.status !== "blocked"
+		)
+			return false;
+		// An optional blocker that is present but wrongly typed (legacy or
+		// hand-edited snapshot) would crash `forDisplay(String.replace)` at
+		// render time — validate instead of trusting the file.
+		return (
+			candidate.blocker === undefined ||
+			typeof candidate.blocker === "string"
+		);
+	});
+}
+
+/**
+ * Identity constraints for the whole list: every task must have content,
+ * phase names must be unique, and task contents must be unique. Used by the
+ * manual entry points (`/todo append`, import, edit), which bypass the
+ * tool's own init/append validation — a duplicate task content is
+ * permanently unaddressable because every targeting op resolves the first
+ * match, and a blank task corrupts every rendered line.
+ */
+export function validateTodoIdentities(phases: TodoPhase[]): string[] {
+	const errors: string[] = [];
+	const seenPhases = new Set<string>();
+	const seenTasks = new Set<string>();
+	for (const phase of phases) {
+		if (seenPhases.has(phase.name)) {
+			errors.push(`Duplicate phase "${phase.name}"`);
+		}
+		seenPhases.add(phase.name);
+		for (const task of phase.tasks) {
+			if (!task.content.trim()) {
+				errors.push(`Empty task content${phase.tasks.length > 1 ? ` in phase "${phase.name}"` : ""}`);
+				continue;
+			}
+			if (seenTasks.has(task.content)) {
+				errors.push(`Task "${task.content}" already exists`);
+			}
+			seenTasks.add(task.content);
+		}
+	}
+	return errors;
 }
 
 /**
@@ -335,11 +375,15 @@ function getTaskTargets(
 	entry: TodoParams,
 	errors: string[],
 ): TodoItem[] {
-	if (entry.task) {
+	// Branch on `!== undefined`, not truthiness: an explicitly supplied empty
+	// target must resolve (and error) as such — with truthiness `""` silently
+	// falls through to the "omit both = everything" path, turning
+	// `{op:"rm", task:""}` into "delete every task".
+	if (entry.task !== undefined) {
 		const hit = resolveTaskOrError(phases, entry.task, errors);
 		return hit ? [hit.task] : [];
 	}
-	if (entry.phase) {
+	if (entry.phase !== undefined) {
 		const phase = resolvePhaseOrError(phases, entry.phase, errors);
 		return phase ? [...phase.tasks] : [];
 	}
@@ -465,7 +509,7 @@ function removeTasks(
 	entry: TodoParams,
 	errors: string[],
 ): TodoPhase[] {
-	if (entry.task) {
+	if (entry.task !== undefined) {
 		const hit = resolveTaskOrError(phases, entry.task, errors);
 		if (!hit) return phases;
 		hit.phase.tasks = hit.phase.tasks.filter(
@@ -473,7 +517,7 @@ function removeTasks(
 		);
 		return phases;
 	}
-	if (entry.phase) {
+	if (entry.phase !== undefined) {
 		const phase = resolvePhaseOrError(phases, entry.phase, errors);
 		if (!phase) return phases;
 		phase.tasks = [];
@@ -519,7 +563,7 @@ function applyEntry(
 			return phases;
 		}
 		case "block": {
-			if (!entry.task && !entry.phase) {
+			if (entry.task === undefined && entry.phase === undefined) {
 				errors.push("block requires a task or phase target");
 				return phases;
 			}
@@ -546,7 +590,7 @@ function applyEntry(
 			return phases;
 		}
 		case "unblock": {
-			if (!entry.task && !entry.phase) {
+			if (entry.task === undefined && entry.phase === undefined) {
 				errors.push("unblock requires a task or phase target");
 				return phases;
 			}

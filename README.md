@@ -23,8 +23,10 @@ unblock | append | view`.
 
 - Phased lists (`init` with `list: [{phase, items}]` or a flattened
   `items: [...]`), tasks referenced **by exact content, never IDs**.
-- The earliest still-open task auto-promotes to `in_progress` after every
-  completion; out-of-order completion is handled (completed tasks never
+- Auto-promote only fires when nothing is in progress: an existing
+  `in_progress` task keeps its place, and completing a task with none in
+  progress promotes the earliest still-open task. Out-of-order completion
+  may move the pointer back to an earlier phase (completed tasks never
   revert).
 - `block`/`unblock` for work waiting on external input — blocked tasks are
   excluded from stop-time reminders and carry an optional `reason` that
@@ -211,10 +213,14 @@ Faithful port, with these deliberate adaptations:
 | Desktop notification integration | Optional named EventBus `desktop-notify:request` payloads with transitioned task names, gated to OSC 9/99-capable TUI terminals |
 | `$EDITOR` for `/todo edit` | Built-in pi editor dialog in the TUI; `$EDITOR` fallback outside it |
 | Plan-mode pause, subagent reconciliation, eager task prelude | Out of scope (pi has no core plan mode / subagents); the guarded hooks are omitted |
-| Branch replay casts persisted `phases` blindly | Structurally validated (`isTodoPhase`) first; corrupt snapshots are skipped, never crash session sync |
+| Branch replay casts persisted `phases` blindly | Structurally validated (`isTodoPhase`, including the optional `blocker` type) first; corrupt snapshots are skipped, never crash session sync |
 | Task content / phase names stored verbatim | Whitespace runs (incl. newlines) collapsed at `init`/`append` input, same one-line guarantee as blocker `reason`; blank entries rejected |
-| Blocker-comment parse binds the first `<!-- blocker:` (lazy) | Binds the trailing comment the writer emits (greedy), so content/blockers containing `-->` or literal `<!-- blocker:` round-trip intact |
-| `/todo edit` external-editor temp file uses a predictable pid/timestamp name in tmp | `mkdtemp` (0700) + 0600 file: no pre-created symlink hijack on multi-user machines |
+| Blocker-comment parse binds the first `<!-- blocker:` (lazy) | Binds the trailing comment the writer emits (greedy) AND delimiters inside the blocker reason are percent-escaped, so blockers containing `-->` or `<!-- blocker:` round-trip intact; legacy unescaped exports still parse |
+| `/todo edit` external-editor temp file uses a predictable pid/timestamp name in tmp | `mkdtemp` (0700) + 0600 file: no pre-created symlink hijack on multi-user machines; saves are aborted when the list changed while the editor was open (no silent overwrite of concurrent progress) |
+| `/todo export` writes unconditionally | Refuses symlink targets and refuses clobbering an existing file without an explicit confirm |
+| Env/flag overrides fall back silently | Invalid values warn (no silent `enabled` from a typo); whitespace-only values are ignored |
+| Manual `/todo append/import/edit` accept blank/duplicate identities | Shared identity validator rejects them (duplicates would be permanently unaddressable) |
+| Todo snapshots merge "no snapshot" with "explicitly cleared" | Replay returns `undefined` vs a valid `[]` — `/todo` never resurrects an explicitly cleared list |
 | `<system-reminder>` as a `developer` message | Same text as a hidden `custom` message (pi converts these to user-role in context — the only injection mechanism extensions have) |
 | System prompts (`prompts/system/*.md`) shipped in-core | A bundled `todo-discipline` skill contributed via `resources_discover` when the tool is enabled (extensions cannot edit the system prompt builder; skills are pi's extension-facing equivalent) |
 

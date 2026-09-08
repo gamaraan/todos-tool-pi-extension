@@ -32,6 +32,31 @@ const MARKER_TO_STATUS: Record<string, TodoStatus> = {
 	"!": "blocked",
 };
 
+// =============================================================================
+// Blocker note escaping
+// =============================================================================
+
+/**
+ * Escape a blocker reason for its trailing `<!-- blocker: … -->` comment.
+ * `%` first, then the HTML-comment delimiters, percent-encoded — a reason
+ * containing `<!-- blocker:` or `-->` otherwise rebinds the greedy parse and
+ * corrupts BOTH the task content and the blocker on the round-trip.
+ */
+function escapeBlocker(reason: string): string {
+	return reason
+		.replaceAll("%", "%25")
+		.replaceAll("<!--", "%3C!--")
+		.replaceAll("-->", "--%3E");
+}
+
+/** Reverse {@link escapeBlocker} (delimiter escapes first, `%25` last). */
+function unescapeBlocker(reason: string): string {
+	return reason
+		.replaceAll("%3C!--", "<!--")
+		.replaceAll("--%3E", "-->")
+		.replaceAll("%25", "%");
+}
+
 /** Render todo phases as a Markdown checklist suitable for editing/copying. */
 export function phasesToMarkdown(phases: TodoPhase[]): string {
 	if (phases.length === 0) return "# Todos\n";
@@ -44,11 +69,11 @@ export function phasesToMarkdown(phases: TodoPhase[]): string {
 		for (const task of phase.tasks) {
 			// A blocked task's reason rides in a trailing HTML comment: invisible in
 			// rendered markdown, unambiguous to parse back (task content can't
-			// contain the comment delimiters), so the note survives `/todo edit` and
-			// export/import round-trips.
+			// contain the comment delimiters, and the reason itself is escaped), so
+			// the note survives `/todo edit` and export/import round-trips.
 			const blockerNote =
 				task.status === "blocked" && task.blocker
-					? ` <!-- blocker: ${task.blocker} -->`
+					? ` <!-- blocker: ${escapeBlocker(task.blocker)} -->`
 					: "";
 			out.push(
 				`- [${STATUS_TO_MARKER[task.status]}] ${task.content}${blockerNote}`,
@@ -110,10 +135,11 @@ export function markdownToPhases(md: string): {
 				rawContent,
 			);
 			if (status === "blocked" && blockerMatch) {
+				const reason = (blockerMatch[2] ?? "").trim();
 				currentPhase.tasks.push({
 					content: (blockerMatch[1] ?? "").trim(),
 					status,
-					blocker: (blockerMatch[2] ?? "").trim(),
+					blocker: reason ? unescapeBlocker(reason) : reason,
 				});
 			} else {
 				currentPhase.tasks.push({ content: rawContent, status });

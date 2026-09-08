@@ -61,7 +61,7 @@ export function renderMidRunNudgePrompt(context: MidRunNudgeContext): string {
 /** The todo tool's description (what the model sees in the tools section). */
 export const TODO_TOOL_DESCRIPTION = `**Tasks: verbatim content strings, NEVER auto-generated IDs; no "task-1"/"task-N". Pass content in \`task\`.**
 
-Each completion: earliest still-open task (phase order) auto-promotes to \`in_progress\`. Out-of-order completion may move pointer back to an earlier phase—expected; completed tasks NEVER revert.
+Auto-promote only fires when NOTHING is in progress: an existing in-progress task keeps its place; completing any task with none in progress promotes the earliest still-open task (phase order) to \`in_progress\`. Out-of-order completion may move the pointer back to an earlier phase—expected; completed tasks NEVER revert.
 
 ## Operations
 

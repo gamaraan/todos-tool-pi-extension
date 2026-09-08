@@ -178,7 +178,11 @@ export function loadTodoConfig(
 	return { config: effective, projectTrusted };
 }
 
-function parseBooleanOverride(value: unknown): boolean | undefined {
+function parseBooleanOverride(
+	value: unknown,
+	label: string,
+	warn: (message: string) => void,
+): boolean | undefined {
 	if (typeof value === "boolean") return value;
 	if (typeof value !== "string") return undefined;
 	const normalized = value.trim().toLowerCase();
@@ -186,19 +190,49 @@ function parseBooleanOverride(value: unknown): boolean | undefined {
 		return true;
 	if (normalized === "off" || normalized === "false" || normalized === "0")
 		return false;
+	// An unrecognized override must not silently land on the built-in default
+	// — a typo'd "of" disabling nothing is worse than a visible warning.
+	if (normalized !== "") {
+		warn(
+			`todos: ignoring invalid ${label} value "${value}" (expected on/off)`,
+		);
+	}
 	return undefined;
 }
 
-function parseRemindersMaxOverride(value: unknown): number | undefined {
-	if (typeof value !== "string" && typeof value !== "number") return undefined;
+function parseRemindersMaxOverride(
+	value: unknown,
+	label: string,
+	warn: (message: string) => void,
+): number | undefined {
+	if (typeof value !== "string" && typeof value !== "number")
+		return undefined;
+	if (typeof value === "string" && value.trim() === "") return undefined;
 	const parsed = typeof value === "number" ? value : Number(value.trim());
-	return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+	if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+	warn(
+		`todos: ignoring invalid ${label} value "${value}" (expected a non-negative integer)`,
+	);
+	return undefined;
 }
 
-function parseEagerOverride(value: unknown): TodoEagerMode | undefined {
-	return value === "default" || value === "preferred" || value === "always"
-		? value
-		: undefined;
+function parseEagerOverride(
+	value: unknown,
+	label: string,
+	warn: (message: string) => void,
+): TodoEagerMode | undefined {
+	if (
+		value === "default" ||
+		value === "preferred" ||
+		value === "always"
+	)
+		return value;
+	if (typeof value === "string" && value.trim() !== "") {
+		warn(
+			`todos: ignoring invalid ${label} value "${value}" (expected default/preferred/always)`,
+		);
+	}
+	return undefined;
 }
 
 /** Resolve startup overrides with flag > environment > JSON precedence. */
@@ -216,14 +250,24 @@ export function resolveTodoConfig(
 	return loadTodoConfig(cwd, isProjectTrusted, warn, {
 		enabled: parseBooleanOverride(
 			flagOrEnv(TODO_FLAGS.enabled, TODO_ENV.enabled),
+			TODO_ENV.enabled,
+			warn,
 		),
 		reminders: parseBooleanOverride(
 			flagOrEnv(TODO_FLAGS.reminders, TODO_ENV.reminders),
+			TODO_ENV.reminders,
+			warn,
 		),
 		remindersMax: parseRemindersMaxOverride(
 			flagOrEnv(TODO_FLAGS.remindersMax, TODO_ENV.remindersMax),
+			TODO_ENV.remindersMax,
+			warn,
 		),
-		eager: parseEagerOverride(flagOrEnv(TODO_FLAGS.eager, TODO_ENV.eager)),
+		eager: parseEagerOverride(
+			flagOrEnv(TODO_FLAGS.eager, TODO_ENV.eager),
+			TODO_ENV.eager,
+			warn,
+		),
 	});
 }
 

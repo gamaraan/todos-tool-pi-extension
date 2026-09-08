@@ -335,11 +335,15 @@ function getTaskTargets(
 	entry: TodoParams,
 	errors: string[],
 ): TodoItem[] {
-	if (entry.task) {
+	// Branch on `!== undefined`, not truthiness: an explicitly supplied empty
+	// target must resolve (and error) as such — with truthiness `""` silently
+	// falls through to the "omit both = everything" path, turning
+	// `{op:"rm", task:""}` into "delete every task".
+	if (entry.task !== undefined) {
 		const hit = resolveTaskOrError(phases, entry.task, errors);
 		return hit ? [hit.task] : [];
 	}
-	if (entry.phase) {
+	if (entry.phase !== undefined) {
 		const phase = resolvePhaseOrError(phases, entry.phase, errors);
 		return phase ? [...phase.tasks] : [];
 	}
@@ -465,7 +469,7 @@ function removeTasks(
 	entry: TodoParams,
 	errors: string[],
 ): TodoPhase[] {
-	if (entry.task) {
+	if (entry.task !== undefined) {
 		const hit = resolveTaskOrError(phases, entry.task, errors);
 		if (!hit) return phases;
 		hit.phase.tasks = hit.phase.tasks.filter(
@@ -473,7 +477,7 @@ function removeTasks(
 		);
 		return phases;
 	}
-	if (entry.phase) {
+	if (entry.phase !== undefined) {
 		const phase = resolvePhaseOrError(phases, entry.phase, errors);
 		if (!phase) return phases;
 		phase.tasks = [];
@@ -519,7 +523,7 @@ function applyEntry(
 			return phases;
 		}
 		case "block": {
-			if (!entry.task && !entry.phase) {
+			if (entry.task === undefined && entry.phase === undefined) {
 				errors.push("block requires a task or phase target");
 				return phases;
 			}
@@ -546,7 +550,7 @@ function applyEntry(
 			return phases;
 		}
 		case "unblock": {
-			if (!entry.task && !entry.phase) {
+			if (entry.task === undefined && entry.phase === undefined) {
 				errors.push("unblock requires a task or phase target");
 				return phases;
 			}

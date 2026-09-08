@@ -12,6 +12,7 @@ import {
 	EAGER_TODO_PRELUDE_CUSTOM_TYPE,
 	isAwaitingUserAnswer,
 	MID_RUN_NUDGE_MESSAGE_TYPE,
+	pruneSupersededTrackerMessages,
 	TodoTracker,
 	TODO_REMINDER_CUSTOM_TYPE,
 } from "../src/tracker.ts";
@@ -35,11 +36,16 @@ function makeTracker(overrides: {
 	pending?: boolean;
 	sent?: string[];
 }) {
+	// Mirrors the production wiring: the host owns the single canonical copy
+	// and the tracker reads/writes it through the host interface.
+	let phases: TodoPhase[] = [];
 	const sent: string[] = [];
 	const host = {
 		config: () => ({ ...TODO_CONFIG_DEFAULTS, ...overrides.config }),
-		getPhases: () => tracker.phases,
-		setPhases: () => {},
+		getPhases: () => phases,
+		setPhases: (next: TodoPhase[]) => {
+			phases = next;
+		},
 		getBranch: (ctx: ExtensionContext) => ctx.sessionManager.getBranch(),
 		hasPendingMessages: (ctx: ExtensionContext) => ctx.hasPendingMessages(),
 		getActiveToolNames: () => overrides.activeTools ?? ["todo", "bash"],
@@ -49,13 +55,23 @@ function makeTracker(overrides: {
 	};
 	const tracker = new TodoTracker(host);
 	if (overrides.phases) tracker.setPhases(overrides.phases);
-	return { tracker, sent };
+	return {
+		tracker,
+		sent,
+		setHostPhases: (next: TodoPhase[]) => {
+			phases = next;
+		},
+	};
 }
 
-function assistantMessage(text: string): AssistantMessage {
+function assistantMessage(
+	text: string,
+	stopReason = "stop",
+): AssistantMessage {
 	return {
 		role: "assistant",
 		content: [{ type: "text", text } satisfies TextContent],
+		stopReason,
 		timestamp: Date.now(),
 	} as AssistantMessage;
 }
@@ -310,6 +326,76 @@ describe("checkCompletion", () => {
 		expect(sent).toEqual([]);
 	});
 
+	it("reads live host state, so reminders track external mutations", async () => {
+		// The tracker must not keep its own snapshot: completing a task outside
+		// the tracker (the todo tool or /todo writes the host copy) silences the
+		// reminder, and creating a task arms it.
+		const { tracker, sent, setHostPhases } = makeTracker({
+			phases: [{ name: "Work", tasks: [{ content: "a", status: "pending" }] }],
+		});
+		setHostPhases([
+			{ name: "Work", tasks: [{ content: "a", status: "completed" }] },
+		]);
+		expect(
+			await tracker.checkCompletion(
+				makeContext(),
+				assistantMessage("Finished."),
+			),
+		).toBe(false);
+		setHostPhases([
+			{
+				name: "Work",
+				tasks: [{ content: "brand new", status: "in_progress" }],
+			},
+		]);
+		expect(
+			await tracker.checkCompletion(
+				makeContext(),
+				assistantMessage("Stopped."),
+			),
+		).toBe(true);
+		expect(sent[0]).toContain("brand new");
+	});
+
+	it("does not remind when the todo tool is not active", async () => {
+		const { tracker, sent } = makeTracker({
+			activeTools: ["bash"],
+			phases: [{ name: "Work", tasks: [{ content: "a", status: "pending" }] }],
+		});
+		const reminded = await tracker.checkCompletion(
+			makeContext(),
+			assistantMessage("Stopped."),
+		);
+		expect(reminded).toBe(false);
+		expect(sent).toEqual([]);
+	});
+
+	it("does not remind after aborted or errored runs", async () => {
+		const { tracker, sent } = makeTracker({
+			phases: [{ name: "Work", tasks: [{ content: "a", status: "pending" }] }],
+		});
+		expect(
+			await tracker.checkCompletion(
+				makeContext(),
+				assistantMessage("Interrupted.", "aborted"),
+			),
+		).toBe(false);
+		expect(
+			await tracker.checkCompletion(
+				makeContext(),
+				assistantMessage("API blew up.", "error"),
+			),
+		).toBe(false);
+		// A clean stop still reminds.
+		expect(
+			await tracker.checkCompletion(
+				makeContext(),
+				assistantMessage("Stopped normally."),
+			),
+		).toBe(true);
+		expect(sent).toHaveLength(1);
+	});
+
 	it("resets the budget when reminders are disabled or the list is empty", async () => {
 		const { tracker, sent } = makeTracker({
 			config: { reminders: false },
@@ -328,10 +414,13 @@ describe("checkCompletion", () => {
 
 	it("sends the reminder through the host sendReminder path", async () => {
 		const sent: string[] = [];
+		let phases: TodoPhase[] = [];
 		const host = {
 			config: () => ({ ...TODO_CONFIG_DEFAULTS }),
-			getPhases: () => tracker.phases,
-			setPhases: () => {},
+			getPhases: () => phases,
+			setPhases: (next: TodoPhase[]) => {
+				phases = next;
+			},
 			getBranch: (ctx: ExtensionContext) => ctx.sessionManager.getBranch(),
 			hasPendingMessages: (ctx: ExtensionContext) => ctx.hasPendingMessages(),
 			getActiveToolNames: () => ["todo"],
@@ -349,6 +438,53 @@ describe("checkCompletion", () => {
 		);
 		expect(sent).toHaveLength(1);
 		expect(sent[0]).toContain(TODO_REMINDER_CUSTOM_TYPE ? "incomplete" : "");
+	});
+});
+
+describe("pruneSupersededTrackerMessages", () => {
+	const reminder = {
+		role: "custom",
+		customType: TODO_REMINDER_CUSTOM_TYPE,
+		content: "You stopped with 1 incomplete todo item(s)",
+		display: false,
+	};
+	const nudge = {
+		role: "custom",
+		customType: MID_RUN_NUDGE_MESSAGE_TYPE,
+		content: "1 todo item still open",
+		display: false,
+	};
+	const assistant = { role: "assistant", content: [{ type: "text", text: "ok" }] };
+	const user = { role: "user", content: [{ type: "text", text: "next" }] };
+
+	it("keeps a trailing reminder that triggered the current turn", () => {
+		expect(pruneSupersededTrackerMessages([user, reminder])).toEqual([
+			user,
+			reminder,
+		]);
+	});
+
+	it("drops reminders and nudges any later real message superseded", () => {
+		expect(
+			pruneSupersededTrackerMessages([reminder, assistant, user]),
+		).toEqual([assistant, user]);
+		expect(
+			pruneSupersededTrackerMessages([nudge, assistant, reminder]),
+		).toEqual([assistant, reminder]);
+	});
+
+	it("leaves non-tracker custom messages and plain histories untouched", () => {
+		const other = { role: "custom", customType: "other", content: "x", display: false };
+		expect(pruneSupersededTrackerMessages([user, other, assistant])).toEqual([
+			user,
+			other,
+			assistant,
+		]);
+		expect(pruneSupersededTrackerMessages([])).toEqual([]);
+		expect(pruneSupersededTrackerMessages([reminder, nudge])).toEqual([
+			reminder,
+			nudge,
+		]);
 	});
 });
 

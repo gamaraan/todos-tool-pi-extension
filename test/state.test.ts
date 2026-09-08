@@ -489,6 +489,46 @@ describe("lenient op recovery", () => {
 	});
 });
 
+describe("empty target safety", () => {
+	// An explicitly supplied empty task/phase must error and leave state
+	// untouched — never fall through to the "omit both = everything" path.
+	const initial = [
+		{
+			name: "Work",
+			tasks: [
+				{ content: "a", status: "pending" },
+				{ content: "b", status: "pending" },
+			],
+		},
+	] as TodoPhase[];
+
+	it.each(["done", "rm", "drop", "block", "unblock"] as const)(
+		"empty task with op=%s fails without touching any task",
+		(op) => {
+			const outcome = executeTodoOp(initial, { op, task: "" }, false);
+			expect(outcome.failed).toBe(true);
+			expect(outcome.summary).toContain("Missing task content");
+			expect(outcome.phases).toEqual(initial);
+		},
+	);
+
+	it.each(["done", "rm", "drop", "block", "unblock"] as const)(
+		"empty phase with op=%s fails without touching any task",
+		(op) => {
+			const outcome = executeTodoOp(initial, { op, phase: "" }, false);
+			expect(outcome.failed).toBe(true);
+			expect(outcome.summary).toContain("Missing phase name");
+			expect(outcome.phases).toEqual(initial);
+		},
+	);
+
+	it("omitted targets still mean all tasks (deliberate global op)", () => {
+		const outcome = executeTodoOp(initial, { op: "done" }, false);
+		expect(outcome.failed).toBe(false);
+		expect(outcome.phases[0]?.tasks.every((t) => t.status === "completed")).toBe(true);
+	});
+});
+
 describe("empty items tolerance", () => {
 	it("accepts op:view with an empty items array", () => {
 		const tool = makeTool();

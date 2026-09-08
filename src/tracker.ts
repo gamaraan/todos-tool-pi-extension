@@ -131,10 +131,19 @@ function assistantText(message: AssistantMessage): string {
 // Tracker
 // ---------------------------------------------------------------------------
 
-/** Owns canonical todo state, eager preludes, and completion reminders. */
+/**
+ * Owns eager preludes, mid-run nudges, and completion reminders.
+ *
+ * Todo state itself is NOT duplicated here: every read goes through
+ * `host.getPhases()` and every write through `host.setPhases()`, so the
+ * host's single canonical copy (mutated by the tool and `/todo` commands)
+ * is always the one the tracker reasons about. Keeping a private copy was
+ * the stale-reminder bug: the host copy moved on each mutation while this
+ * one only refreshed at session events, so reminders fired about tasks the
+ * agent had long since completed (and never for tasks freshly created).
+ */
 export class TodoTracker {
 	readonly #host: TodoTrackerHost;
-	#phases: TodoPhase[] = [];
 	#reminderCount = 0;
 	#reminderAwaitingProgress = false;
 	#mutationsSinceLastTouch = 0;
@@ -144,15 +153,14 @@ export class TodoTracker {
 		this.#host = host;
 	}
 
-	/** Returns a defensive clone of the current todo phases. */
+	/** Returns the host's canonical todo phases (never a tracker-owned copy). */
 	get phases(): TodoPhase[] {
-		return clonePhases(this.#phases);
+		return this.#host.getPhases();
 	}
 
-	/** Replaces todo phases with a defensive clone. */
+	/** Replaces the canonical todo phases (branch replay entry point). */
 	setPhases(phases: TodoPhase[]): void {
-		this.#phases = clonePhases(phases);
-		this.#host.setPhases(this.#phases);
+		this.#host.setPhases(clonePhases(phases));
 	}
 
 	/** Rehydrates todo phases from the current transcript branch. */
@@ -186,7 +194,7 @@ export class TodoTracker {
 		const settings = this.#host.config();
 		const mode = settings.eager;
 		if (mode === "default" || !settings.enabled) return undefined;
-		if (this.#phases.length > 0) return undefined;
+		if (this.#host.getPhases().length > 0) return undefined;
 		if (promptText !== undefined) {
 			if (
 				this.#host
@@ -221,7 +229,8 @@ export class TodoTracker {
 		const settings = this.#host.config();
 		if (!settings.enabled || !settings.reminders) return null;
 		if (!this.#host.getActiveToolNames(ctx).includes("todo")) return null;
-		const incomplete = this.#phases
+		const incomplete = this.#host
+			.getPhases()
 			.flatMap((phase) => phase.tasks)
 			.filter(
 				(task) => task.status === "pending" || task.status === "in_progress",
@@ -255,6 +264,11 @@ export class TodoTracker {
 		}
 		if (this.#reminderAwaitingProgress) return false;
 		if (this.#reminderCount >= settings.remindersMax) return false;
+		// Without the todo tool an incomplete list is deliberate (read-only
+		// mode, tools subset) — reminding the model to edit state it cannot
+		// touch is pure noise. Mirrors the guards on the eager prelude and
+		// mid-run nudge.
+		if (!this.#host.getActiveToolNames(ctx).includes("todo")) return false;
 		const phases = this.phases;
 		if (phases.length === 0) {
 			this.#reminderCount = 0;
@@ -278,6 +292,15 @@ export class TodoTracker {
 			this.#reminderAwaitingProgress = false;
 			return false;
 		}
+		// Never nag after an interrupted or failed run: the user pressed Esc
+		// (or the model errored), treating it as a signal to stop, not as an
+		// invitation for the extension to re-enter the loop on its own.
+		if (
+			lastAssistant &&
+			(lastAssistant.stopReason === "aborted" ||
+				lastAssistant.stopReason === "error")
+		)
+			return false;
 		if (lastAssistant && isAwaitingUserAnswer(lastAssistant)) return false;
 		if (this.#host.hasPendingMessages(ctx)) return false;
 		this.#reminderCount++;
@@ -298,6 +321,56 @@ export class TodoTracker {
 		await this.#host.sendReminder(ctx, reminder);
 		return true;
 	}
+}
+
+/** Tracker-injected context messages that become stale the moment the agent responds. */
+const SUPERSEDED_TRACKER_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+	TODO_REMINDER_CUSTOM_TYPE,
+	MID_RUN_NUDGE_MESSAGE_TYPE,
+]);
+
+function isTrackerContextMessage(
+	message: unknown,
+): message is { role: "custom"; customType: string } {
+	if (typeof message !== "object" || message === null) return false;
+	const record = message as { role?: unknown; customType?: unknown };
+	return (
+		record.role === "custom" &&
+		typeof record.customType === "string" &&
+		SUPERSEDED_TRACKER_MESSAGE_TYPES.has(record.customType)
+	);
+}
+
+/**
+ * Drop tracker-injected messages (completion reminders, mid-run nudges)
+ * from outgoing LLM context once any later real message exists.
+ *
+ * Each such message describes moment-in-time todo state ("You stopped with
+ * N incomplete todo item(s): …"). Persisted in the session it stays visible
+ * to the model forever — on the next prompts and after resume/rewind — and
+ * the model reliably interprets it as a fresh instruction, which is how a
+ * one-off reminder compounds into "that's a stale reminder" replies on
+ * every turn. The message is only meaningful while the turn it triggered
+ * is in flight, i.e. while it trails everything else; any later
+ * assistant/user/tool message has consumed it.
+ *
+ * Non-destructive: only the outgoing copy (pi's `context` event) is
+ * filtered; the session file keeps full history.
+ */
+export function pruneSupersededTrackerMessages<T>(
+	messages: readonly T[],
+): T[] {
+	let lastConsumedMessageIndex = -1;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (!isTrackerContextMessage(messages[i])) {
+			lastConsumedMessageIndex = i;
+			break;
+		}
+	}
+	return messages.filter(
+		(message, index) =>
+			!isTrackerContextMessage(message) || index > lastConsumedMessageIndex,
+	);
 }
 
 // Re-exported for consumers that validate persisted phases.

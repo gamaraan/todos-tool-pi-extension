@@ -165,7 +165,9 @@ export class TodoTracker {
 
 	/** Rehydrates todo phases from the current transcript branch. */
 	syncFromBranch(ctx: ExtensionContext): void {
-		this.setPhases(getLatestTodoPhasesFromEntries(this.#host.getBranch(ctx)));
+		this.setPhases(
+			getLatestTodoPhasesFromEntries(this.#host.getBranch(ctx)) ?? [],
+		);
 	}
 
 	/** Resets per-prompt reminder and mutation budgets. */

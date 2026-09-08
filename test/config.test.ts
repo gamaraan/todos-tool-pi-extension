@@ -137,6 +137,44 @@ describe("loadTodoConfig", () => {
 		expect(loaded.config.remindersMax).toBe(0);
 	});
 
+	it("warns on invalid env/flag overrides instead of silently defaulting", () => {
+		const { cwd } = setupDirs(null, null);
+		const warnings: string[] = [];
+		const loaded = resolveTodoConfig(
+			cwd,
+			() => false,
+			(msg) => warnings.push(msg),
+			() => undefined,
+			{
+				PI_TODO_ENABLED: "of", // typo — must warn, not silently stay enabled
+				PI_TODO_REMINDERS_MAX: "3.5",
+				PI_TODO_EAGER: "sometimes",
+			},
+		);
+		expect(loaded.config.enabled).toBe(true); // fallback, but loudly
+		expect(loaded.config.remindersMax).toBe(TODO_CONFIG_DEFAULTS.remindersMax);
+		expect(loaded.config.eager).toBe("default");
+		expect(warnings.some((m) => m.includes("PI_TODO_ENABLED"))).toBe(true);
+		expect(warnings.some((m) => m.includes("PI_TODO_REMINDERS_MAX"))).toBe(true);
+		expect(warnings.some((m) => m.includes("PI_TODO_EAGER"))).toBe(true);
+	});
+
+	it("blank env overrides are ignored without changing defaults", () => {
+		const { cwd } = setupDirs(null, null);
+		const warnings: string[] = [];
+		const loaded = resolveTodoConfig(
+			cwd,
+			() => false,
+			(msg) => warnings.push(msg),
+			() => undefined,
+			{ PI_TODO_REMINDERS_MAX: "  ", PI_TODO_ENABLED: "" },
+		);
+		// A whitespace-only value must NOT become 0 (= disable reminders).
+		expect(loaded.config.remindersMax).toBe(TODO_CONFIG_DEFAULTS.remindersMax);
+		expect(loaded.config.enabled).toBe(true);
+		expect(warnings).toEqual([]);
+	});
+
 	it("resolves environment overrides over JSON", () => {
 		const { cwd } = setupDirs(
 			JSON.stringify({

@@ -524,6 +524,13 @@ export default function todosExtension(pi: ExtensionAPI): void {
 					process.stdout.write(`\x1b]52;c;${base64}\x07`);
 					return true;
 				},
+				confirmOverwrite: async (filePath: string): Promise<boolean> => {
+					if (!ctx.hasUI) return false;
+					return ctx.ui.confirm(
+						"Overwrite existing file?",
+						`"${filePath}" already exists and will be replaced.`,
+					);
+				},
 				openExternalEditor: (prefill: string) =>
 					openInExternalEditor(getEditorCommand() ?? "vi", prefill),
 			});

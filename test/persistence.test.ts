@@ -54,7 +54,7 @@ const phasesC: TodoPhase[] = [
 
 describe("getLatestTodoPhasesFromEntries", () => {
 	it("returns [] for an empty branch", () => {
-		expect(getLatestTodoPhasesFromEntries([])).toEqual([]);
+		expect(getLatestTodoPhasesFromEntries([])).toBeUndefined();
 	});
 
 	it("picks the latest successful todo toolResult details", () => {
@@ -110,7 +110,7 @@ describe("getLatestTodoPhasesFromEntries", () => {
 	it("returns a defensive clone (mutating the result does not affect the source)", () => {
 		const entries = [messageEntry("toolResult", "todo", { phases: phasesA })];
 		const restored = getLatestTodoPhasesFromEntries(entries);
-		restored[0]!.tasks[0]!.status = "completed";
+		restored![0]!.tasks[0]!.status = "completed";
 		expect(phasesA[0]?.tasks[0]?.status).toBe("pending");
 	});
 
@@ -134,6 +134,37 @@ describe("getLatestTodoPhasesFromEntries", () => {
 		expect(getLatestTodoPhasesFromEntries(entries)).toEqual(phasesA);
 	});
 
+	it("rejects wrongly-typed blocker fields (object, array, number)", () => {
+		for (const blocker of [123, { note: "x" }, ["x"]]) {
+			const corrupt = [
+				{
+					name: "X",
+					tasks: [{ content: "x", status: "blocked", blocker }],
+				},
+			];
+			const entries = [
+				customEntry(USER_TODO_EDIT_CUSTOM_TYPE, { phases: corrupt }),
+			];
+			expect(getLatestTodoPhasesFromEntries(entries)).toBeUndefined();
+		}
+	});
+
+	it("accepts string and absent blocker fields", () => {
+		const valid: TodoPhase[] = [
+			{
+				name: "X",
+				tasks: [
+					{ content: "a", status: "blocked", blocker: "waiting on user" },
+					{ content: "b", status: "pending" },
+				],
+			},
+		];
+		const entries = [
+			customEntry(USER_TODO_EDIT_CUSTOM_TYPE, { phases: valid }),
+		];
+		expect(getLatestTodoPhasesFromEntries(entries)).toEqual(valid);
+	});
+
 	it("rejects tasks with unknown statuses", () => {
 		const corrupt = [
 			{ name: "X", tasks: [{ content: "x", status: "weird" }] },
@@ -141,14 +172,16 @@ describe("getLatestTodoPhasesFromEntries", () => {
 		const entries = [
 			customEntry(USER_TODO_EDIT_CUSTOM_TYPE, { phases: corrupt }),
 		];
-		expect(getLatestTodoPhasesFromEntries(entries)).toEqual([]);
+		expect(getLatestTodoPhasesFromEntries(entries)).toBeUndefined();
 	});
 
-	it("honors a valid empty phases array as a cleared list", () => {
+	it("honors a valid empty phases array as a cleared list ([] !== undefined)", () => {
 		const entries = [
 			messageEntry("toolResult", "todo", { phases: phasesA }),
 			customEntry(USER_TODO_EDIT_CUSTOM_TYPE, { phases: [] }),
 		];
-		expect(getLatestTodoPhasesFromEntries(entries)).toEqual([]);
+		const restored = getLatestTodoPhasesFromEntries(entries);
+		expect(restored).toEqual([]);
+		expect(restored).not.toBeUndefined();
 	});
 });

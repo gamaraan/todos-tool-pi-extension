@@ -32,11 +32,18 @@ function validPersistedPhases(value: unknown): TodoPhase[] | undefined {
 	return clonePhases(value);
 }
 
+// Validated even when empty — a deliberate `[]` clear survives as-is.
+
 /** Scan a session branch (oldest-first as returned by `getBranch()`) for the
- *  latest todo snapshot, scanning from the end backward. */
+ *  latest todo snapshot, scanning from the end backward.
+ *
+ *  Returns `undefined` when NO valid snapshot exists, versus a valid empty
+ *  array when the latest durable record is an explicitly cleared list —
+ *  callers must not conflate the two (an empty list is authoritative and
+ *  must not be mistaken for "fall back to in-memory state"). */
 export function getLatestTodoPhasesFromEntries(
 	entries: SessionEntry[],
-): TodoPhase[] {
+): TodoPhase[] | undefined {
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
 		if (entry === undefined) continue;
@@ -49,7 +56,7 @@ export function getLatestTodoPhasesFromEntries(
 			>;
 			const data = customEntry.data;
 			const restored = data ? validPersistedPhases(data.phases) : undefined;
-			if (restored) return restored;
+			if (restored !== undefined) return restored;
 			continue;
 		}
 		if (entry.type !== "message") continue;
@@ -69,8 +76,8 @@ export function getLatestTodoPhasesFromEntries(
 		const details = message.details as { phases?: unknown } | undefined;
 		if (!details) continue;
 		const restored = validPersistedPhases(details.phases);
-		if (restored) return restored;
+		if (restored !== undefined) return restored;
 	}
 
-	return [];
+	return undefined;
 }

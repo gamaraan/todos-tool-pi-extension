@@ -112,6 +112,60 @@ describe("TodoCommandController", () => {
 		).toBe(true);
 	});
 
+	it("refuses to overwrite an existing export target without confirmation", async () => {
+		tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "todos-export-"));
+		const target = path.join(tempRoot, "TODO.md");
+		await fs.writeFile(target, "unrelated content\n", "utf8");
+		const host = createHost(tempRoot, [
+			{ name: "W", tasks: [{ content: "a", status: "pending" }] },
+		]);
+		const controller = new TodoCommandController(host);
+
+		await controller.handleTodoCommand("export");
+
+		const notify = host.notify as ReturnType<typeof mock>;
+		expect(
+			notify.mock.calls.some((c) =>
+				String(c[0]).includes("already exists"),
+			),
+		).toBe(true);
+		expect(await fs.readFile(target, "utf8")).toBe("unrelated content\n");
+	});
+
+	it("refuses to export through a symlink", async () => {
+		tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "todos-export-"));
+		await fs.writeFile(path.join(tempRoot, "real.md"), "keep\n", "utf8");
+		await fs.symlink(path.join(tempRoot, "real.md"), path.join(tempRoot, "TODO.md"));
+		const host = createHost(tempRoot, [
+			{ name: "W", tasks: [{ content: "a", status: "pending" }] },
+		]);
+		const controller = new TodoCommandController(host);
+
+		await controller.handleTodoCommand("export");
+
+		const notify = host.notify as ReturnType<typeof mock>;
+		expect(
+			notify.mock.calls.some((c) => String(c[0]).includes("symlink")),
+		).toBe(true);
+		expect(await fs.readFile(path.join(tempRoot, "real.md"), "utf8")).toBe("keep\n");
+	});
+
+	it("exports over an existing file when the user confirms", async () => {
+		tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "todos-export-"));
+		const target = path.join(tempRoot, "TODO.md");
+		await fs.writeFile(target, "old\n", "utf8");
+		const host = createHost(
+			tempRoot,
+			[{ name: "W", tasks: [{ content: "a", status: "pending" }] }],
+			{ confirmOverwrite: mock(async () => true) },
+		);
+		const controller = new TodoCommandController(host);
+
+		await controller.handleTodoCommand("export");
+
+		expect(await fs.readFile(target, "utf8")).toContain("- [ ] a");
+	});
+
 	it("exports a quoted path with spaces", async () => {
 		tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "todos-export-quoted-"));
 		const phases: TodoPhase[] = [
@@ -298,6 +352,112 @@ describe("TodoCommandController", () => {
 			"Port credential store",
 			"NextTask",
 		]);
+	});
+
+	it("rejects appending a duplicate task (by content identity)", async () => {
+		const phases: TodoPhase[] = [
+			{ name: "Work", tasks: [{ content: "Ship it", status: "pending" }] },
+		];
+		const host = createHost("/tmp", phases);
+		const controller = new TodoCommandController(host);
+
+		await controller.handleTodoCommand("append Work ship it");
+
+		const notify = host.notify as ReturnType<typeof mock>;
+		expect(
+			notify.mock.calls.some(
+				(c) =>
+					String(c[0]).includes('already exists') && c[1] === "error",
+			),
+		).toBe(true);
+		expect((host.commit as ReturnType<typeof mock>).mock.calls).toHaveLength(0);
+	});
+
+	it("rejects appending a whitespace-only task", async () => {
+		const host = createHost("/tmp", []);
+		const controller = new TodoCommandController(host);
+
+		// Quoted whitespace arg: the tokenizer keeps it, producing a
+		// whitespace-only task content that must be rejected.
+		await controller.handleTodoCommand('append Work " "');
+
+		const notify = host.notify as ReturnType<typeof mock>;
+		expect(
+			notify.mock.calls.some((c) => String(c[0]).includes("content")),
+		).toBe(true);
+		expect((host.commit as ReturnType<typeof mock>).mock.calls).toHaveLength(0);
+	});
+
+	it("rejects imports whose parse produced duplicate identities", async () => {
+		tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "todos-import-"));
+		const source = path.join(tempRoot, "TODO.md");
+		await fs.writeFile(source, "# Work\n- [ ] A\n- [ ] A\n", "utf8");
+		const host = createHost(tempRoot, []);
+		const controller = new TodoCommandController(host);
+
+		await controller.handleTodoCommand(`import "${source}"`);
+
+		const notify = host.notify as ReturnType<typeof mock>;
+		expect(
+			notify.mock.calls.some(
+				(c) => c[1] === "error" && String(c[0]).includes("Could not import"),
+			),
+		).toBe(true);
+		expect((host.commit as ReturnType<typeof mock>).mock.calls).toHaveLength(0);
+	});
+
+	it("rejects /todo edit saves that introduce duplicates", async () => {
+		const host = createHost("/tmp", [
+			{ name: "Work", tasks: [{ content: "A", status: "pending" }] },
+		], {
+			openEditor: mock(async () => "# Work\n- [ ] A\n- [ ] A\n"),
+		});
+		const controller = new TodoCommandController(host);
+
+		await controller.handleTodoCommand("edit");
+
+		const notify = host.notify as ReturnType<typeof mock>;
+		expect(
+			notify.mock.calls.some(
+				(c) => c[1] === "error" && String(c[0]).includes("Todos not saved"),
+			),
+		).toBe(true);
+		expect((host.commit as ReturnType<typeof mock>).mock.calls).toHaveLength(0);
+	});
+
+	it("aborts /todo edit saves when the list changed while the editor was open", async () => {
+		const mutable = { phases: [{ name: "Work", tasks: [{ content: "A", status: "pending" }] }] as TodoPhase[] };
+		let resolveEditor!: (text: string) => void;
+		const host = createHost("/tmp", mutable.phases, {
+			getPhases: () => mutable.phases,
+			openEditor: mock(
+				() => new Promise<string>((resolve) => { resolveEditor = resolve; }),
+			),
+		});
+		const controller = new TodoCommandController(host);
+		const pending = controller.handleTodoCommand("edit");
+		// The agent appends work while the user is editing the prefill snapshot.
+		mutable.phases = [
+			{
+				name: "Work",
+				tasks: [
+					{ content: "A", status: "pending" },
+					{ content: "B", status: "pending" },
+				],
+			},
+		];
+		resolveEditor("# Work\n- [x] A\n");
+		await pending;
+
+		const notify = host.notify as ReturnType<typeof mock>;
+		expect(
+			notify.mock.calls.some(
+				(c) =>
+					c[1] === "error" &&
+					String(c[0]).includes("changed while the editor was open"),
+			),
+		).toBe(true);
+		expect((host.commit as ReturnType<typeof mock>).mock.calls).toHaveLength(0);
 	});
 
 	it("starts a task by fuzzy content match", async () => {

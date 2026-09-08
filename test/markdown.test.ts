@@ -99,6 +99,45 @@ describe("phasesToMarkdown / markdownToPhases round-trip", () => {
 		expect(parsed).toEqual(phases);
 	});
 
+	it("escapes comment delimiters inside blocker reasons on the round-trip", () => {
+		const phases: TodoPhase[] = [
+			{
+				name: "W",
+				tasks: [
+					{
+						content: "A",
+						status: "blocked",
+						blocker: "wait <!-- blocker: inner -->",
+					},
+				],
+			},
+		];
+		const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown(phases));
+		expect(errors).toEqual([]);
+		expect(parsed).toEqual(phases);
+	});
+
+	it("round-trips blockers containing raw percent signs and closers", () => {
+		const phases: TodoPhase[] = [
+			{
+				name: "W",
+				tasks: [
+					{ content: "A", status: "blocked", blocker: "50% done -->" },
+				],
+			},
+		];
+		const { phases: parsed, errors } = markdownToPhases(phasesToMarkdown(phases));
+		expect(errors).toEqual([]);
+		expect(parsed).toEqual(phases);
+	});
+
+	it("still parses unescaped legacy blocker comments", () => {
+		const { phases } = markdownToPhases("# W\n- [!] A <!-- blocker: plain note -->\n");
+		expect(phases).toEqual([
+			{ name: "W", tasks: [{ content: "A", status: "blocked", blocker: "plain note" }] },
+		]);
+	});
+
 	it("preserves blocked status across the markdown round-trip", () => {
 		const phases: TodoPhase[] = [
 			{

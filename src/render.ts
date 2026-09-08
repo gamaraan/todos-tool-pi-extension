@@ -360,9 +360,13 @@ export function todoRenderResult(
 		);
 	}
 
-	const phases = (result.details?.phases ?? []).filter(
-		(phase) => phase.tasks.length > 0,
-	);
+	// Dropping empty phases must NOT renumber the rest — the HUD keeps the
+	// original phase positions, so filtering here without tracking indices
+	// makes the same phase read as "I. Work" in the tool output and
+	// "II. Work" in the widget.
+	const phases = (result.details?.phases ?? [])
+		.map((phase, index) => ({ phase, oneBasedIndex: index + 1 }))
+		.filter((entry) => entry.phase.tasks.length > 0);
 	const completedTasks = result.details?.completedTasks ?? [];
 	const completionKeysByPhase = new Map<string, Set<string>>();
 	for (const task of completedTasks) {
@@ -373,7 +377,7 @@ export function todoRenderResult(
 		}
 		keys.add(task.content);
 	}
-	const allTasks = phases.flatMap((phase) => phase.tasks);
+	const allTasks = phases.flatMap((entry) => entry.phase.tasks);
 	const title = uiTheme.fg("toolTitle", uiTheme.bold("Todo"));
 	const meta = uiTheme.fg("muted", `${allTasks.length} tasks`);
 	const header = `${title}  ${meta}`;
@@ -394,14 +398,16 @@ export function todoRenderResult(
 	const touched =
 		expanded || !multiPhase
 			? null
-			: computeTouchedPhases(args, phases, completedTasks);
+			: computeTouchedPhases(
+					args,
+					phases.map((entry) => entry.phase),
+					completedTasks,
+				);
 	const isMatched = (): boolean => false; // subagent matching is out of scope; literal in_progress still leads
 	const bodyLines: string[] = [];
-	for (let p = 0; p < phases.length; p++) {
-		const phase = phases[p];
-		if (phase === undefined) continue;
+	for (const { phase, oneBasedIndex } of phases) {
 		if (touched && !touched.has(phase.name)) {
-			bodyLines.push(formatPhaseSummary(phase, p + 1, uiTheme));
+			bodyLines.push(formatPhaseSummary(phase, oneBasedIndex, uiTheme));
 			continue;
 		}
 		const completionKeys =
@@ -409,7 +415,7 @@ export function todoRenderResult(
 		const indent = multiPhase ? "  " : "";
 		for (const line of renderPhaseBody(
 			phase,
-			p + 1,
+			oneBasedIndex,
 			uiTheme,
 			multiPhase,
 			expanded,

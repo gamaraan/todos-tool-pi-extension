@@ -823,6 +823,210 @@ describe("todos extension factory", () => {
 		expect(results[0]).toBeUndefined();
 	});
 
+	async function makeReminderCapture(api: ExtensionAPI) {
+		const sent: Array<{
+			message: { customType: string; content: string; display: boolean };
+			options: unknown;
+		}> = [];
+		api.sendMessage = (message: never, options?: unknown) => {
+			sent.push({ message, options });
+		};
+		return sent;
+	}
+
+	async function settleAssistant(
+		handlers: Map<string, AnyHandler[]>,
+		ctx: ExtensionContext,
+		text = "All current todos are done.",
+	): Promise<void> {
+		await dispatch(
+			handlers,
+			"agent_end",
+			{
+				type: "agent_end",
+				messages: [
+					{
+						role: "assistant",
+						content: [{ type: "text", text }],
+						stopReason: "stop",
+					},
+				],
+			},
+			ctx,
+		);
+		await dispatch(handlers, "agent_settled", { type: "agent_settled" }, ctx);
+	}
+
+	// P1 regression: the tracker and the tool must share one canonical state,
+	// so completing via the tool silences reminders; these reproduce the
+	// "stale reminder … scaffold session" bug.
+	it("does not remind about todos the tool already completed", async () => {
+		const { api, handlers, tools } = makeRecordingAPI();
+		const sent = await makeReminderCapture(api);
+		todosExtension(api);
+		sandboxAgentDir();
+		const ctx = makeContext(
+			{ cwd: "/tmp/project" },
+			{
+				getBranch: () =>
+					branchWithTodo([
+						{
+							name: "Scaffold",
+							tasks: [{ content: "scaffold crate", status: "pending" }],
+						},
+					]) as never,
+				getCwd: () => "/tmp/project",
+				getSessionFile: () => "/tmp/project/session.jsonl",
+			},
+		);
+		await dispatch(
+			handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" },
+			ctx,
+		);
+		const tool = tools.find((t) => t.name === "todo");
+		if (!tool) throw new Error("todo tool missing");
+		await tool.execute!(
+			"done-it",
+			{ op: "done", task: "scaffold crate" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		await settleAssistant(handlers, ctx);
+		expect(sent).toEqual([]);
+	});
+
+	it("reminds about live incomplete todos created after session start", async () => {
+		const { api, handlers, tools } = makeRecordingAPI();
+		const sent = await makeReminderCapture(api);
+		todosExtension(api);
+		sandboxAgentDir();
+		const ctx = makeContext(
+			{ cwd: "/tmp/project" },
+			{
+				getBranch: () => [],
+				getCwd: () => "/tmp/project",
+				getSessionFile: () => "/tmp/project/session.jsonl",
+			},
+		);
+		await dispatch(
+			handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" },
+			ctx,
+		);
+		const tool = tools.find((t) => t.name === "todo");
+		if (!tool) throw new Error("todo tool missing");
+		await tool.execute!(
+			"init",
+			{ op: "init", items: ["Wire workspace"] },
+			undefined,
+			undefined,
+			ctx,
+		);
+		await settleAssistant(handlers, ctx, "Stopping here.");
+		expect(sent).toHaveLength(1);
+		expect(sent[0]?.message.customType).toBe("todo-reminder");
+		expect(sent[0]?.message.content).toContain("Wire workspace");
+		expect(sent[0]?.options).toEqual({ triggerTurn: true });
+
+		// Completing between prompts and settling again sends nothing new —
+		// resetCycle() must not resurrect stale tasks on the next prompt.
+		await tool.execute!(
+			"done",
+			{ op: "done", task: "Wire workspace" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		await dispatch(
+			handlers,
+			"before_agent_start",
+			{ type: "before_agent_start", prompt: "Unrelated next prompt" },
+			ctx,
+		);
+		await settleAssistant(handlers, ctx);
+		expect(sent).toHaveLength(1);
+	});
+
+	it("does not remind after a task completed via /todo", async () => {
+		const { api, handlers, commandHandlers } = makeRecordingAPI();
+		const sent = await makeReminderCapture(api);
+		todosExtension(api);
+		sandboxAgentDir();
+		const ctx = makeContext(
+			{ cwd: "/tmp/project" },
+			{
+				getBranch: () =>
+					branchWithTodo([
+						{
+							name: "Work",
+							tasks: [{ content: "finish", status: "in_progress" }],
+						},
+					]) as never,
+				getCwd: () => "/tmp/project",
+				getSessionFile: () => "/tmp/project/session.jsonl",
+			},
+		);
+		await dispatch(
+			handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" },
+			ctx,
+		);
+		const command = commandHandlers.get("todo");
+		if (!command) throw new Error("todo command missing");
+		await command("done finish", ctx as ExtensionCommandContext);
+		await settleAssistant(handlers, ctx);
+		// The commit's own hidden user-todo-edit note (triggerTurn: false) is
+		// expected; what must not appear is a completion reminder.
+		expect(
+			sent.filter((entry) => entry.message.customType === "todo-reminder"),
+		).toEqual([]);
+	});
+
+	it("prunes superseded tracker messages from outgoing context", async () => {
+		const { api, handlers } = makeRecordingAPI();
+		todosExtension(api);
+		sandboxAgentDir();
+		const ctx = makeContext({ cwd: "/tmp/project" });
+		await dispatch(
+			handlers,
+			"session_start",
+			{ type: "session_start", reason: "startup" },
+			ctx,
+		);
+		const reminder = {
+			role: "custom",
+			customType: "todo-reminder",
+			content: "You stopped with 1 incomplete todo item(s): scaffold",
+			display: false,
+		};
+		const assistant = {
+			role: "assistant",
+			content: [{ type: "text", text: "All done." }],
+		};
+		// A reminder the assistant already answered leaves outgoing context.
+		const [filtered] = (await dispatch(
+			handlers,
+			"context",
+			{ type: "context", messages: [reminder, assistant] },
+			ctx,
+		)) as [{ messages: unknown[] }];
+		expect(filtered?.messages).toEqual([assistant]);
+		// A trailing reminder (the turn it triggered is in flight) stays: the
+		// handler returns undefined = context left untouched.
+		const [unchanged] = await dispatch(
+			handlers,
+			"context",
+			{ type: "context", messages: [assistant, reminder] },
+			ctx,
+		);
+		expect(unchanged).toBeUndefined();
+	});
+
 	it("tool_result nudges are steered into the session as custom messages", async () => {
 		const sent: Array<{ customType: string; display: boolean }> = [];
 		const { api, handlers } = makeRecordingAPI();

@@ -62,7 +62,14 @@ export interface TodoTrackerHost {
 export function isAwaitingUserAnswer(message: AssistantMessage): boolean {
 	const text = assistantText(message);
 	if (!text) return false;
-	const lastLine = text.split(/\r?\n/).at(-1)?.trim();
+	// Model output commonly wraps the closing question in markdown emphasis
+	// (bold/italic/backticks); strip decoration before the line heuristics
+	// or "**Should I continue?**" fails to count as awaiting an answer.
+	const lastLine = text
+		.split(/\r?\n/)
+		.at(-1)
+		?.replace(/[`*_~]+/g, "")
+		.trim();
 	return (
 		lastLine !== undefined &&
 		(isQuestionPromptLine(lastLine) || isResponseCueLine(lastLine))

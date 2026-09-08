@@ -524,6 +524,20 @@ describe("isAwaitingUserAnswer", () => {
 		).toBe(true);
 	});
 
+	it("strips markdown decoration around trailing questions", () => {
+		expect(
+			isAwaitingUserAnswer(assistantMessage("**Should I continue?**")),
+		).toBe(true);
+		expect(
+			isAwaitingUserAnswer(assistantMessage("_What do you think?_")),
+		).toBe(true);
+		expect(
+			isAwaitingUserAnswer(
+				assistantMessage("The fix is in place. **Choose one.**"),
+			),
+		).toBe(false);
+	});
+
 	it("ignores non-text content", () => {
 		expect(
 			isAwaitingUserAnswer({
